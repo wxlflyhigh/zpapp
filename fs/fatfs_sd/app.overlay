@@ -1,0 +1,21 @@
+/*
+ * Copyright (c) 2022 Nordic Semiconductor ASA
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/ {
+	sdhc0: sdhc@40114000 {
+		compatible = "realtek,ameba-sdhc";
+		reg = <0x40114000 0x4000>;
+//		interrupts = <66 0>;
+		status = "okay";
+		mmc {
+			compatible = "zephyr,sdmmc-disk";
+			status = "okay";
+			disk-name = "SD";
+		};
+//		power-delay-ms = <1500>;
+//		clocks = <&gcr ADI_MAX32_CLOCK_BUS1 10>;
+	};
+};
