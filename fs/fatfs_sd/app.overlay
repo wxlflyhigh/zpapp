@@ -4,6 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/*
+// sdhc0 is moved to zephyr\dts\arm\realtek\amebaG2\amebaG2.dtsi
+// mmc is moved to zephyr\boards\realtek\rtl8721f_evb\rtl8721f_evb.dts
+
 / {
 	sdhc0: sdhc@40114000 {
 		compatible = "realtek,ameba-sdhc";
@@ -19,3 +23,4 @@
 //		clocks = <&gcr ADI_MAX32_CLOCK_BUS1 10>;
 	};
 };
+*/
