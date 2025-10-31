@@ -17,6 +17,9 @@
 #include <zephyr/fs/littlefs.h>
 #endif
 
+#include <zephyr/logging/log.h>
+LOG_MODULE_REGISTER(stmain);
+
 #define STORAGE_PARTITION	storage_partition
 #define STORAGE_PARTITION_ID	FIXED_PARTITION_ID(STORAGE_PARTITION)
 
@@ -24,6 +27,9 @@
 #define FAIL_MSG "fail (err %d)\n"
 #define SECTION_BEGIN_LINE \
 	"\n=================================================\n"
+
+#define LOOP_NUMS (2)
+
 /* Default values are assigned to settings values consuments
  * All of them will be overwritten if storage contain proper key-values
  */
@@ -73,7 +79,7 @@ int alpha_handle_set(const char *name, size_t len, settings_read_cb read_cb,
 			return -EINVAL;
 		}
 		rc = read_cb(cb_arg, &angle_val, sizeof(angle_val));
-		printk("<alpha/angle/1> = %d\n", angle_val);
+		LOG_INF("<alpha/angle/1> = %d\n", angle_val);
 		return 0;
 	}
 
@@ -88,21 +94,21 @@ int alpha_handle_set(const char *name, size_t len, settings_read_cb read_cb,
 
 		if (!next) {
 			rc = read_cb(cb_arg, &length_val, sizeof(length_val));
-			printk("<alpha/length> = %" PRId64 "\n", length_val);
+			LOG_INF("<alpha/length> = %" PRId64 "\n", length_val);
 			return 0;
 		}
 
 		if (!strncmp(next, "1", next_len)) {
 			rc = read_cb(cb_arg, &length_1_val,
 				     sizeof(length_1_val));
-			printk("<alpha/length/1> = %d\n", length_1_val);
+			LOG_INF("<alpha/length/1> = %d\n", length_1_val);
 			return 0;
 		}
 
 		if (!strncmp(next, "2", next_len)) {
 			rc = read_cb(cb_arg, &length_2_val,
 				     sizeof(length_2_val));
-			printk("<alpha/length/2> = %d\n", length_2_val);
+			LOG_INF("<alpha/length/2> = %d\n", length_2_val);
 			return 0;
 		}
 
@@ -124,13 +130,13 @@ int beta_handle_set(const char *name, size_t len, settings_read_cb read_cb,
 	if (!next) {
 		if (!strncmp(name, "voltage", name_len)) {
 			rc = read_cb(cb_arg, &voltage_val, sizeof(voltage_val));
-			printk("<alpha/beta/voltage> = %d\n", voltage_val);
+			LOG_INF("<alpha/beta/voltage> = %d\n", voltage_val);
 			return 0;
 		}
 
 		if (!strncmp(name, "source", name_len)) {
 			if (len > sizeof(source_name_val) - 1) {
-				printk("<alpha/beta/source> is not compatible "
+				LOG_INF("<alpha/beta/source> is not compatible "
 				       "with the application\n");
 				return -EINVAL;
 			}
@@ -139,7 +145,7 @@ int beta_handle_set(const char *name, size_t len, settings_read_cb read_cb,
 			if (rc < 0) {
 				return rc;
 			} else if (rc > 0) {
-				printk("<alpha/beta/source> = %s\n",
+				LOG_INF("<alpha/beta/source> = %s\n",
 				       source_name_val);
 			}
 			return 0;
@@ -151,14 +157,14 @@ int beta_handle_set(const char *name, size_t len, settings_read_cb read_cb,
 
 int alpha_handle_commit(void)
 {
-	printk("loading all settings under <alpha> handler is done\n");
+	LOG_INF("loading all settings under <alpha> handler is done\n");
 	return 0;
 }
 
 int alpha_handle_export(int (*cb)(const char *name,
 			       const void *value, size_t val_len))
 {
-	printk("export keys under <alpha> handler\n");
+	LOG_INF("export keys under <alpha> handler\n");
 	(void)cb("alpha/angle/1", &angle_val, sizeof(angle_val));
 	(void)cb("alpha/length", &length_val, sizeof(length_val));
 	(void)cb("alpha/length/1", &length_1_val, sizeof(length_1_val));
@@ -170,7 +176,7 @@ int alpha_handle_export(int (*cb)(const char *name,
 int beta_handle_export(int (*cb)(const char *name,
 			       const void *value, size_t val_len))
 {
-	printk("export keys under <beta> handler\n");
+	LOG_INF("export keys under <beta> handler\n");
 	(void)cb("alpha/beta/voltage", &voltage_val, sizeof(voltage_val));
 	(void)cb("alpha/beta/source", source_name_val, strlen(source_name_val) +
 						       1);
@@ -180,7 +186,7 @@ int beta_handle_export(int (*cb)(const char *name,
 
 int beta_handle_commit(void)
 {
-	printk("loading all settings under <beta> handler is done\n");
+	LOG_INF("loading all settings under <beta> handler is done\n");
 	return 0;
 }
 
@@ -202,28 +208,28 @@ static void example_save_and_load_basic(void)
 	int i, rc;
 	int32_t val_s32;
 
-	printk(SECTION_BEGIN_LINE);
-	printk("basic load and save using registered handlers\n");
+	LOG_INF(SECTION_BEGIN_LINE);
+	LOG_INF("basic load and save using registered handlers\n");
 	/* load all key-values at once
 	 * In case a key-value doesn't exist in the storage
 	 * default values should be assigned to settings consuments variable
 	 * before any settings load call
 	 */
-	printk("\nload all key-value pairs using registered handlers\n");
+	LOG_INF("\nload all key-value pairs using registered handlers\n");
 	settings_load();
 
 	val_s32 = voltage_val - 25;
 	/* save certain key-value directly*/
-	printk("\nsave <alpha/beta/voltage> key directly: ");
+	LOG_INF("\nsave <alpha/beta/voltage> key directly: ");
 	rc = settings_save_one("alpha/beta/voltage", (const void *)&val_s32,
 			       sizeof(val_s32));
 	if (rc) {
-		printk(FAIL_MSG, rc);
+		LOG_INF(FAIL_MSG, rc);
 	}
 
-	printk("OK.\n");
+	LOG_INF("OK.\n");
 
-	printk("\nload <alpha/beta> key-value pairs using registered "
+	LOG_INF("\nload <alpha/beta> key-value pairs using registered "
 	       "handlers\n");
 	settings_load_subtree("alpha/beta");
 
@@ -241,7 +247,7 @@ static void example_save_and_load_basic(void)
 
 	angle_val += 1;
 
-	printk("\nsave all key-value pairs using registered handlers\n");
+	LOG_INF("\nsave all key-value pairs using registered handlers\n");
 	settings_save();
 
 	if (++length_1_val > 100) {
@@ -257,7 +263,7 @@ static void example_save_and_load_basic(void)
 	 * or those that were deleted
 	 * before
 	 */
-	printk("\nload all key-value pairs using registered handlers\n");
+	LOG_INF("\nload all key-value pairs using registered handlers\n");
 	settings_save();
 }
 
@@ -275,35 +281,35 @@ static int direct_loader(const char *name, size_t len, settings_read_cb read_cb,
 	int rc;
 	struct direct_length_data *dest = (struct direct_length_data *)param;
 
-	printk("direct load: ");
+	LOG_INF("direct load: ");
 
 	name_len = settings_name_next(name, &next);
 
 	if (name_len == 0) {
 		rc = read_cb(cb_arg, &(dest->length), sizeof(dest->length));
-		printk("<alpha/length>\n");
+		LOG_INF("<alpha/length>\n");
 		return 0;
 	}
 
 	name_len = settings_name_next(name, &next);
 	if (next) {
-		printk("nothing\n");
+		LOG_INF("nothing\n");
 		return -ENOENT;
 	}
 
 	if (!strncmp(name, "1", name_len)) {
 		rc = read_cb(cb_arg, &(dest->length_1), sizeof(dest->length_1));
-		printk("<alpha/length/1>\n");
+		LOG_INF("<alpha/length/1>\n");
 		return 0;
 	}
 
 	if (!strncmp(name, "2", name_len)) {
 		rc = read_cb(cb_arg, &(dest->length_2), sizeof(dest->length_2));
-		printk("<alpha/length/2>\n");
+		LOG_INF("<alpha/length/2>\n");
 		return 0;
 	}
 
-	printk("nothing\n");
+	LOG_INF("nothing\n");
 	return -ENOENT;
 }
 
@@ -316,16 +322,16 @@ static void example_direct_load_subtree(void)
 	 * This handler loads subtree values to call-specific structure of type
 	 * 'direct_length_data`.
 	 */
-	printk(SECTION_BEGIN_LINE);
-	printk("loading subtree to destination provided by the caller\n\n");
+	LOG_INF(SECTION_BEGIN_LINE);
+	LOG_INF("loading subtree to destination provided by the caller\n\n");
 	rc = settings_load_subtree_direct("alpha/length", direct_loader,
 					  (void *)&dld);
 	if (rc == 0) {
-		printk("  direct.length = %" PRId64 "\n", dld.length);
-		printk("  direct.length_1 = %d\n", dld.length_1);
-		printk("  direct.length_2 = %d\n", dld.length_2);
+		LOG_INF("  direct.length = %" PRId64 "\n", dld.length);
+		LOG_INF("  direct.length_1 = %d\n", dld.length_1);
+		LOG_INF("  direct.length_2 = %d\n", dld.length_2);
 	} else {
-		printk("  direct load fails unexpectedly\n");
+		LOG_INF("  direct load fails unexpectedly\n");
 	}
 }
 
@@ -352,11 +358,11 @@ static int direct_loader_immediate_value(const char *name, size_t len,
 			rc = read_cb(cb_arg, one_value->dest, len);
 			if (rc >= 0) {
 				one_value->fetched = 1;
-				printk("immediate load: OK.\n");
+				LOG_INF("immediate load: OK.\n");
 				return 0;
 			}
 
-			printk(FAIL_MSG, rc);
+			LOG_INF(FAIL_MSG, rc);
 			return rc;
 		}
 		return -EINVAL;
@@ -394,27 +400,27 @@ static void example_without_handler(void)
 	uint8_t val_u8;
 	int rc;
 
-	printk(SECTION_BEGIN_LINE);
-	printk("Service a key-value pair without dedicated handlers\n\n");
+	LOG_INF(SECTION_BEGIN_LINE);
+	LOG_INF("Service a key-value pair without dedicated handlers\n\n");
 	rc = load_immediate_value("gamma", &val_u8, sizeof(val_u8));
 	if (rc == -ENOENT) {
 		val_u8 = GAMMA_DEFAULT_VAl;
-		printk("<gamma> = %d (default)\n", val_u8);
+		LOG_INF("<gamma> = %d (default)\n", val_u8);
 	} else if (rc == 0) {
-		printk("<gamma> = %d\n", val_u8);
+		LOG_INF("<gamma> = %d\n", val_u8);
 	} else {
-		printk("unexpected"FAIL_MSG, rc);
+		LOG_INF("unexpected"FAIL_MSG, rc);
 	}
 
 	val_u8++;
 
-	printk("save <gamma> key directly: ");
+	LOG_INF("save <gamma> key directly: ");
 	rc = settings_save_one("gamma", (const void *)&val_u8,
 			       sizeof(val_u8));
 	if (rc) {
-		printk(FAIL_MSG, rc);
+		LOG_INF(FAIL_MSG, rc);
 	} else {
-		printk("OK.\n");
+		LOG_INF("OK.\n");
 	}
 }
 
@@ -435,34 +441,34 @@ static void example_initialization(void)
 
 	rc = fs_mount(&littlefs_mnt);
 	if (rc != 0) {
-		printk("mounting littlefs error: [%d]\n", rc);
+		LOG_INF("mounting littlefs error: [%d]\n", rc);
 	} else {
 
 		rc = fs_unlink(CONFIG_SETTINGS_FILE_PATH);
 		if ((rc != 0) && (rc != -ENOENT)) {
-			printk("can't delete config file%d\n", rc);
+			LOG_INF("can't delete config file%d\n", rc);
 		} else {
-			printk("FS initialized: OK\n");
+			LOG_INF("FS initialized: OK\n");
 		}
 	}
 #endif
 
 	rc = settings_subsys_init();
 	if (rc) {
-		printk("settings subsys initialization: fail (err %d)\n", rc);
+		LOG_INF("settings subsys initialization: fail (err %d)\n", rc);
 		return;
 	}
 
-	printk("settings subsys initialization: OK.\n");
+	LOG_INF("settings subsys initialization: OK.\n");
 
 	rc = settings_register(&alpha_handler);
 	if (rc) {
-		printk("subtree <%s> handler registered: fail (err %d)\n",
+		LOG_INF("subtree <%s> handler registered: fail (err %d)\n",
 		       alpha_handler.name, rc);
 	}
 
-	printk("subtree <%s> handler registered: OK\n", alpha_handler.name);
-	printk("subtree <alpha/beta> has static handler\n");
+	LOG_INF("subtree <%s> handler registered: OK\n", alpha_handler.name);
+	LOG_INF("subtree <alpha/beta> has static handler\n");
 }
 
 static void example_delete(void)
@@ -470,25 +476,25 @@ static void example_delete(void)
 	uint64_t val_u64;
 	int rc;
 
-	printk(SECTION_BEGIN_LINE);
-	printk("Delete a key-value pair\n\n");
+	LOG_INF(SECTION_BEGIN_LINE);
+	LOG_INF("Delete a key-value pair\n\n");
 
 	rc = load_immediate_value("alpha/length", &val_u64, sizeof(val_u64));
 	if (rc == 0) {
-		printk("  <alpha/length> value exist in the storage\n");
+		LOG_INF("  <alpha/length> value exist in the storage\n");
 	}
 
-	printk("delete <alpha/length>: ");
+	LOG_INF("delete <alpha/length>: ");
 	rc = settings_delete("alpha/length");
 	if (rc) {
-		printk(FAIL_MSG, rc);
+		LOG_INF(FAIL_MSG, rc);
 	} else {
-		printk("OK.\n");
+		LOG_INF("OK.\n");
 	}
 
 	rc = load_immediate_value("alpha/length", &val_u64, sizeof(val_u64));
 	if (rc == -ENOENT) {
-		printk("  Can't to load the <alpha/length> value as "
+		LOG_INF("  Can't to load the <alpha/length> value as "
 		       "expected\n");
 	}
 }
@@ -498,38 +504,38 @@ void example_runtime_usage(void)
 	int rc;
 	uint8_t injected_str[sizeof(source_name_val)] = "RT";
 
-	printk(SECTION_BEGIN_LINE);
-	printk("Inject the value to the setting destination in runtime\n\n");
+	LOG_INF(SECTION_BEGIN_LINE);
+	LOG_INF("Inject the value to the setting destination in runtime\n\n");
 
 	rc = settings_runtime_set("alpha/beta/source", (void *) injected_str,
 				  strlen(injected_str) + 1);
 
-	printk("injected <alpha/beta/source>: ");
+	LOG_INF("injected <alpha/beta/source>: ");
 	if (rc) {
-		printk(FAIL_MSG, rc);
+		LOG_INF(FAIL_MSG, rc);
 	} else {
-		printk("OK.\n");
+		LOG_INF("OK.\n");
 	}
 
-	printk("  The settings destination off the key <alpha/beta/source> has "
+	LOG_INF("  The settings destination off the key <alpha/beta/source> has "
 	       "got value: \"%s\"\n\n", source_name_val);
 
 	/* set settings destination value "by hand" for next example */
 	(void) strcpy(source_name_val, "rtos");
 
-	printk(SECTION_BEGIN_LINE);
-	printk("Read a value from the setting destination in runtime\n\n");
+	LOG_INF(SECTION_BEGIN_LINE);
+	LOG_INF("Read a value from the setting destination in runtime\n\n");
 
 	rc = settings_runtime_get("alpha/beta/source", (void *) injected_str,
 				  strlen(injected_str) + 1);
-	printk("fetched <alpha/beta/source>: ");
+	LOG_INF("fetched <alpha/beta/source>: ");
 	if (rc < 0) {
-		printk(FAIL_MSG, rc);
+		LOG_INF(FAIL_MSG, rc);
 	} else {
-		printk("OK.\n");
+		LOG_INF("OK.\n");
 	}
 
-	printk("  String value \"%s\" was retrieved from the settings "
+	LOG_INF("  String value \"%s\" was retrieved from the settings "
 	       "destination off the key <alpha/beta/source>\n",
 	       source_name_val);
 }
@@ -539,15 +545,15 @@ int main(void)
 
 	int i;
 
-	printk("\n*** Settings usage example ***\n\n");
+	LOG_INF("\n*** Settings usage example ***\n\n");
 
 	/* settings initialization */
 	example_initialization();
 
-	for (i = 0; i < 6; i++) {
-		printk("\n##############\n");
-		printk("# iteration %d", i);
-		printk("\n##############\n");
+	for (i = 0; i < LOOP_NUMS; i++) {
+		LOG_INF("\n##############\n");
+		LOG_INF("# iteration %d", i);
+		LOG_INF("\n##############\n");
 
 		/*---------------------------------------------
 		 * basic save and load using registered handler
@@ -575,6 +581,6 @@ int main(void)
 	 */
 	example_runtime_usage();
 
-	printk("\n*** THE END  ***\n");
+	LOG_INF("\n*** THE END  ***\n");
 	return 0;
 }

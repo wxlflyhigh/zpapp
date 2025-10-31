@@ -2,8 +2,10 @@
 
 cmake_minimum_required(VERSION 3.20.0)
 #set(QEMU_EXTRA_FLAGS -s)
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -save-temps=obj")
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(settings_sample)
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -save-temps=obj")
 
 target_sources(app PRIVATE src/main.c)
