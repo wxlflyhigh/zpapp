@@ -138,6 +138,13 @@ static int littlefs_flash_erase(unsigned int id)
 	flash_area_close(pfa);
 	return rc;
 }
+
+/**
+ * 此处，指定从 dts 中寻找 lable 为 "lfs1" 的节点。
+ * 也可以换成其它的值，只要和 dts 中的label一致即可。
+ * 
+ * 例如，如果使用 app_change_lfs_lable.overlay,将这里写成 DT_NODELABEL(lfs1) 即可.
+ */
 #define PARTITION_NODE DT_NODELABEL(lfs1)
 
 #if DT_NODE_EXISTS(PARTITION_NODE)
