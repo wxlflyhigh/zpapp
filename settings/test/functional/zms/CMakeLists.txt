@@ -1,14 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 cmake_minimum_required(VERSION 3.20.0)
-
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -save-temps=obj")
-
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
-project(functional_nvs)
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -save-temps=obj")
+project(functional_zms)
 
 # The code is in the library common to several tests.
-target_sources(app PRIVATE settings_test_nvs.c)
+target_sources(app PRIVATE settings_test_zms.c)
 
 add_subdirectory(../src func_test_bindir)
