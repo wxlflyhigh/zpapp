@@ -4,6 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/*
+键名					值类型		值长度
+alpha/beta/voltage		int			4
+alpha/beta/source		char[]
+alpha/angle/1
+alpha/length/1
+alpha/length/2
+*/
 #include <stdio.h>
 #include <string.h>
 
@@ -20,6 +28,7 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(stmain);
 
+// 当后端是文件系统时使用 storage_partition
 #define STORAGE_PARTITION	storage_partition
 #define STORAGE_PARTITION_ID	FIXED_PARTITION_ID(STORAGE_PARTITION)
 
@@ -28,7 +37,7 @@ LOG_MODULE_REGISTER(stmain);
 #define SECTION_BEGIN_LINE \
 	"\n=================================================\n"
 
-#define LOOP_NUMS (2)
+#define LOOP_NUMS (1)
 
 /* Default values are assigned to settings values consuments
  * All of them will be overwritten if storage contain proper key-values
@@ -73,6 +82,7 @@ int alpha_handle_set(const char *name, size_t len, settings_read_cb read_cb,
 	const char *next;
 	size_t next_len;
 	int rc;
+	LOG_INF("[%s] %s, %d.", __func__, name, len);
 
 	if (settings_name_steq(name, "angle/1", &next) && !next) {
 		if (len != sizeof(angle_val)) {
@@ -124,6 +134,7 @@ int beta_handle_set(const char *name, size_t len, settings_read_cb read_cb,
 	const char *next;
 	size_t name_len;
 	int rc;
+	LOG_INF("[%s] %s, %d.", __func__, name, len);
 
 	name_len = settings_name_next(name, &next);
 
@@ -157,13 +168,23 @@ int beta_handle_set(const char *name, size_t len, settings_read_cb read_cb,
 
 int alpha_handle_commit(void)
 {
+	LOG_INF("[%s]", __func__);
+
 	LOG_INF("loading all settings under <alpha> handler is done\n");
 	return 0;
 }
 
+/**
+ * @brief 
+ * 
+ * @param cb : pointer to settings_save_one
+ * @return int 
+ */
 int alpha_handle_export(int (*cb)(const char *name,
 			       const void *value, size_t val_len))
 {
+	LOG_INF("[%s]", __func__);
+
 	LOG_INF("export keys under <alpha> handler\n");
 	(void)cb("alpha/angle/1", &angle_val, sizeof(angle_val));
 	(void)cb("alpha/length", &length_val, sizeof(length_val));
@@ -176,6 +197,7 @@ int alpha_handle_export(int (*cb)(const char *name,
 int beta_handle_export(int (*cb)(const char *name,
 			       const void *value, size_t val_len))
 {
+	LOG_INF("[%s]", __func__);
 	LOG_INF("export keys under <beta> handler\n");
 	(void)cb("alpha/beta/voltage", &voltage_val, sizeof(voltage_val));
 	(void)cb("alpha/beta/source", source_name_val, strlen(source_name_val) +
@@ -186,6 +208,7 @@ int beta_handle_export(int (*cb)(const char *name,
 
 int beta_handle_commit(void)
 {
+	LOG_INF("[%s]", __func__);
 	LOG_INF("loading all settings under <beta> handler is done\n");
 	return 0;
 }
@@ -193,6 +216,7 @@ int beta_handle_commit(void)
 int beta_handle_get(const char *name, char *val, int val_len_max)
 {
 	const char *next;
+	LOG_INF("[%s] %s, val=%s, maxlen=%d.", __func__, name, val, val_len_max);
 
 	if (settings_name_steq(name, "source", &next) && !next) {
 		val_len_max = MIN(val_len_max, strlen(source_name_val));
@@ -215,6 +239,12 @@ static void example_save_and_load_basic(void)
 	 * default values should be assigned to settings consuments variable
 	 * before any settings load call
 	 */
+	/** settings_load() 依次触发了以下回调
+	 * beta_handle_set 多次; name: voltage, source;
+	 * alpha_handle_set 多次; name: angle/1, length/1, length/2;
+	 * beta_handle_commit 一次
+	 * alpha_handle_commit 一次
+	*/
 	LOG_INF("\nload all key-value pairs using registered handlers\n");
 	settings_load();
 
@@ -229,6 +259,10 @@ static void example_save_and_load_basic(void)
 
 	LOG_INF("OK.\n");
 
+	/** settings_load_subtree("alpha/beta") 依次触发了以下回调
+	 * beta_handle_set 多次; name: voltage, source;
+	 * beta_handle_commit 一次
+	 */
 	LOG_INF("\nload <alpha/beta> key-value pairs using registered "
 	       "handlers\n");
 	settings_load_subtree("alpha/beta");
@@ -247,6 +281,12 @@ static void example_save_and_load_basic(void)
 
 	angle_val += 1;
 
+	/** settings_save() 依次触发了以下回调
+	 * beta_handle_export 一次
+	 * 		在 beta_handle_export 中，用户主动调用 cb=settings_save_one 真正去存储数据。
+	 * alpha_handle_export 一次
+	 * 		在 alpha_handle_export 中，用户主动调用 cb=settings_save_one 真正去存储数据。
+	 */
 	LOG_INF("\nsave all key-value pairs using registered handlers\n");
 	settings_save();
 
@@ -281,7 +321,7 @@ static int direct_loader(const char *name, size_t len, settings_read_cb read_cb,
 	int rc;
 	struct direct_length_data *dest = (struct direct_length_data *)param;
 
-	LOG_INF("direct load: ");
+	LOG_INF("direct load: %s. len=%d", name, len);
 
 	name_len = settings_name_next(name, &next);
 
@@ -350,6 +390,8 @@ static int direct_loader_immediate_value(const char *name, size_t len,
 	int rc;
 	struct direct_immediate_value *one_value =
 					(struct direct_immediate_value *)param;
+
+	LOG_INF("[%s] name=%s, len=%d", __func__, name, len);
 
 	name_len = settings_name_next(name, &next);
 
