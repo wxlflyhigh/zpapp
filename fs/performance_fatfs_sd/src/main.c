@@ -8,6 +8,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/fs/fs.h>
 #include <zephyr/kernel.h>  // for k_msleep()
+#include <zephyr/random/random.h>
 #include <zephyr/fs/fs_sys.h>
 #include <zephyr/sys/printk.h>
 #include <string.h>
@@ -18,7 +19,6 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(fatfs_sd);
 
-// zephyr\tests\subsys\fs\fat_fs_api\src\test_fat.h
 #if defined(CONFIG_DISK_DRIVER_SDMMC)
 #define DISK_NAME "SD"
 #else
@@ -27,8 +27,6 @@ LOG_MODULE_REGISTER(fatfs_sd);
 
 #define FATFS_MNTP	"/"DISK_NAME":"
 #define TEST_FILE	FATFS_MNTP"/testfile.txt"
-#define TEST_DIR	FATFS_MNTP"/testdir"
-#define TEST_DIR_FILE	FATFS_MNTP"/testdir/testfile2.txt"
 
 /* 测试配置 */
 #define TEST_BLOCK_SIZE_MAX     (32*1024)           /* 测试块最大大小 */
@@ -67,24 +65,56 @@ static uint8_t expected_buffer[TEST_BLOCK_SIZE_MAX];
 static struct perf_stats stats[TEST_ITERATIONS];
 
 static struct fs_test_config configs[] = {
-    {4*1024*1024, 16*1024, 0},
+    // {8*1024*1024, 16*1024, 0},
+    // {8*1024*1024, 16*1024, 1},
     // {8*1024*1024, 32*1024, 0},
+    // {8*1024*1024, 32*1024, 1},
 
-#if 0
-    {4*1024*1024, 4*1024, 0},
-    {4*1024*1024, 8*1024, 0},
-    {4*1024*1024, 16*1024, 0},
-    {4*1024*1024, 32*1024, 0},
+#if 1
+    {4*1024*1024,  4*1024,  0},
+    {4*1024*1024,  8*1024,  0},
+    {4*1024*1024,  16*1024, 0},
+    {4*1024*1024,  32*1024, 0},
+                   
+    {8*1024*1024,  4*1024,  0},
+    {8*1024*1024,  8*1024,  0},
+    {8*1024*1024,  16*1024, 0},
+    {8*1024*1024,  32*1024, 0},
 
-    {8*1024*1024, 4*1024, 0},
-    {8*1024*1024, 8*1024, 0},
-    {8*1024*1024, 16*1024, 0},
-    {8*1024*1024, 32*1024, 0},
-
-    {16*1024*1024, 4*1024, 0},
-    {16*1024*1024, 8*1024, 0},
+    {16*1024*1024, 4*1024,  0},
+    {16*1024*1024, 8*1024,  0},
     {16*1024*1024, 16*1024, 0},
     {16*1024*1024, 32*1024, 0},
+    
+    /* rand access */
+    {4*1024*1024,  4*1024,  1},
+    {4*1024*1024,  8*1024,  1},
+    {4*1024*1024,  16*1024, 1},
+    {4*1024*1024,  32*1024, 1},
+
+    {8*1024*1024,  4*1024,  1},
+    {8*1024*1024,  8*1024,  1},
+    {8*1024*1024,  16*1024, 1},
+    {8*1024*1024,  32*1024, 1},
+
+    {16*1024*1024, 4*1024,  1},
+    {16*1024*1024, 8*1024,  1},
+    {16*1024*1024, 16*1024, 1},
+    {16*1024*1024, 32*1024, 1},
+#endif
+
+#if 1
+    {8*1024*1024,  128,     0},
+    {8*1024*1024,  256,     0},
+    {8*1024*1024,  512,     0},
+    {8*1024*1024,  1*1024,  0},
+    {8*1024*1024,  2*1024,  0},
+
+    {8*1024*1024,  128,     1},
+    {8*1024*1024,  256,     1},
+    {8*1024*1024,  512,     1},
+    {8*1024*1024,  1*1024,  1},
+    {8*1024*1024,  2*1024,  1},
 #endif
 };
 
@@ -139,6 +169,15 @@ static int test_sequential_write(struct perf_stats *stat)
     /* 连续写入 */
     size_t total_written = 0;
     while (total_written < file_size) {
+        if (stat->config->random_access) {
+            uint32_t offset = sys_rand32_get() % (file_size/block_size) * block_size;
+            rc = fs_seek(&file, offset, FS_SEEK_SET);
+            if (rc < 0) {
+                printk("Seek failed: %d, offset %d\n", rc, offset);
+                break;
+            }
+        }
+
         chunk_size = (file_size - total_written < block_size) ? file_size - total_written : block_size;
         rc = fs_write(&file, buffer, chunk_size);
         if (rc < 0 ||  rc != chunk_size) {
@@ -158,12 +197,11 @@ static int test_sequential_write(struct perf_stats *stat)
     stat->write_time_ms = (end_time - start_time);
     stat->write_speed_kbps = (int)(((float)file_size / 1024 * 1000) / stat->write_time_ms);
     
-    // fs_close(&file);
     rc = fs_close(&file);
     if (rc != 0) {
         DiagPrintf("Error closing file: %d\n", rc);
     } else {
-        DiagPrintf("close %s successfully\n", TEST_FILE_NAME);
+        // DiagPrintf("close %s successfully\n", TEST_FILE_NAME);
     }
     return 0;
 }
@@ -197,6 +235,15 @@ static int test_sequential_read(struct perf_stats *stat)
     /* 连续读取并验证 */
     size_t total_read = 0;
     while (total_read < file_size) {
+        if (stat->config->random_access) {
+            uint32_t offset = sys_rand32_get() % (file_size/block_size) * block_size;
+            rc = fs_seek(&file, offset, FS_SEEK_SET);
+            if (rc < 0) {
+                printk("Seek failed: %d, offset %d\n", rc, offset);
+                break;
+            }
+        }
+
         chunk_size = (file_size - total_read < block_size) ? file_size - total_read : block_size;
         rc = fs_read(&file, buffer, chunk_size);
         if (rc < 0 || rc != chunk_size) {
@@ -364,8 +411,8 @@ static int test_small_files(void)
 static void display_performance_results(struct fs_test_config *config, struct perf_stats *stats)
 {
     DiagPrintf("\n====== FATFS Performance Results ======\n");
-    DiagPrintf("file_size %d KB, block_size %d KB, random access %d. Average read speed %d KB/s. Average write speed %d KB/s\n", 
-        config->file_size_bytes/1024, config->block_size_bytes/1024, config->random_access, 
+    DiagPrintf("file_size %d bytes, block_size %d bytes, random access %d. Average read speed %d KB/s. Average write speed %d KB/s\n", 
+        config->file_size_bytes, config->block_size_bytes, config->random_access, 
         config->avg_read_speed, config->avg_write_speed);
 
     for (int i = 0; i < TEST_ITERATIONS; i++) {
@@ -405,9 +452,9 @@ int main(void)
             printk("ERROR: block_size %d exceeds %d\n", config->block_size_bytes, TEST_BLOCK_SIZE_MAX);
             continue;
         }
-        printk("[%d:%d] file_size %d KB, block_size %d KB, random access %d\n", 
+        printk("[%d:%d] file_size %d bytes, block_size %d bytes, random access %d\n", 
             c, config_nums,
-            config->file_size_bytes/1024, config->block_size_bytes/1024, config->random_access);
+            config->file_size_bytes, config->block_size_bytes, config->random_access);
 
         memset(stats, 0, sizeof(stats[0]) * TEST_ITERATIONS);
         for (int i = 0; i < TEST_ITERATIONS; i++) {
@@ -422,7 +469,6 @@ int main(void)
                 return rc;
             }
 
-#if 1
             /* 测试2: 顺序读取 */
             printk("Test 2: Sequential read test...\n");
             rc = test_sequential_read(stat);
@@ -430,7 +476,6 @@ int main(void)
                 printk("Sequential read test failed: %d\n", rc);
                 return rc;
             }
-#endif
 
     #if 0
             /* 测试3: 随机访问 */
