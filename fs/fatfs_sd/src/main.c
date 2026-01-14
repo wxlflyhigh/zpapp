@@ -23,6 +23,7 @@
 #define TEST_FILE	FATFS_MNTP"/testfile.txt"
 #define TEST_DIR	FATFS_MNTP"/testdir"
 #define TEST_DIR_FILE	FATFS_MNTP"/testdir/testfile2.txt"
+#define TEST_ITERATIONS (3)
 
 #include <zephyr/logging/log.h>
 // LOG_MODULE_DECLARE(fs, CONFIG_FS_LOG_LEVEL);
@@ -46,9 +47,11 @@ int main(void)
 	int ret;
 	struct fs_file_t file;
 	char read_buff[128];
-	ssize_t brw;
-	const char test_str[] = "Hello, FatFS on SDCard!";
-	size_t sz = strlen(test_str);
+	ssize_t brw;	// bytes readed
+	const char test_str_prefix[] = "Hello, FatFS on SDCard!";
+	char test_str[128];
+	// size_t sz = strlen(test_str);
+	int written_bytes;
 
 	LOG_INF("start to mount fatfs");
 	ret = fs_mount(&fatfs_mnt);
@@ -59,53 +62,60 @@ int main(void)
 		LOG_INF("FAT file system mounting successfully\n");
 	}
 
-	LOG_INF("start to fs_file_t_init");
-	fs_file_t_init(&file);
-	LOG_INF("start to fs_open");
-	ret = fs_open(&file, TEST_FILE, FS_O_CREATE | FS_O_RDWR);
-	if (ret != 0) {
-		LOG_INF("Error opening file: %s, (%d)\n", TEST_FILE, ret);
-		goto err_unmount;
-	} else {
-		LOG_INF("open [%s] successfully\n", TEST_FILE);
-	}
+	// 测试多次读写
+	for (int i = 0; i < TEST_ITERATIONS; i++) {
+		LOG_INF("[%d:%d] start to fs_file_t_init", i, TEST_ITERATIONS);
+		memset(test_str, 0 , 128);
+		snprintf(test_str, sizeof(test_str), "%s , round: %d", test_str_prefix, i);
 
-	// write
-	LOG_INF("start to fs_write");
-	ret = fs_write(&file, test_str, strlen(test_str));
-	if (ret < 0) {
-		LOG_INF("Error writing to file: %d\n", ret);
-	}
+		fs_file_t_init(&file);
+		LOG_INF("start to fs_open");
+		ret = fs_open(&file, TEST_FILE, FS_O_CREATE | FS_O_RDWR);
+		if (ret != 0) {
+			LOG_INF("Error opening file: %s, (%d)\n", TEST_FILE, ret);
+			goto err_unmount;
+		} else {
+			LOG_INF("open [%s] successfully\n", TEST_FILE);
+		}
 
-	if (ret < strlen(test_str)) {
-		LOG_INF("Unable to complete write. Volume full.\n");
-	}
-	LOG_INF("write date [%s] to file %s successfully. len:%d\n", test_str, TEST_FILE, ret);
+		// write
+		LOG_INF("start to fs_write");
+		written_bytes = strlen(test_str);
+		ret = fs_write(&file, test_str, strlen(test_str));
+		if (ret < 0) {
+			LOG_INF("Error writing to file: %d\n", ret);
+		}
 
-	// read
-	(void)fs_seek(&file, 0, FS_SEEK_SET);
-	brw = fs_read(&file, read_buff, sz);
-	if (brw < 0) {
-		LOG_INF("Failed reading file [%zd]\n", brw);
-		fs_close(&file);
-		goto err_close;
-	}
+		if (ret < strlen(test_str)) {
+			LOG_INF("Unable to complete write. Volume full.\n");
+		}
+		LOG_INF("write date [%s] to file %s successfully. len:%d\n", test_str, TEST_FILE, ret);
+		
+		// read
+		(void)fs_seek(&file, 0, FS_SEEK_SET);
+		brw = fs_read(&file, read_buff, written_bytes);
+		if (brw < 0) {
+			LOG_INF("Failed reading file [%zd]\n", brw);
+			fs_close(&file);
+			goto err_close;
+		}
 
-	read_buff[brw] = 0;
+		read_buff[brw] = 0;
 
-	if (strcmp(test_str, read_buff)) {
-		LOG_INF("Error - Data read does not match data written\n");
-		LOG_INF("Data read:\"%s\"\n\n", read_buff);
-	} else {
-		LOG_INF("Data read successfully. [%s]\n", read_buff);
-	}
+		if (strcmp(test_str, read_buff)) {
+			LOG_INF("Error - Data read does not match data written\n");
+			LOG_INF("Data read:\"%s\"\n\n", read_buff);
+		} else {
+			LOG_INF("Data read successfully. [%s]\n", read_buff);
+		}
 
-err_close:
-	ret = fs_close(&file);
-	if (ret != 0) {
-		LOG_INF("Error closing file: %d\n", ret);
-	} else {
-		LOG_INF("close %s successfully\n", TEST_FILE);
+	err_close:
+		ret = fs_close(&file);
+		if (ret != 0) {
+			LOG_INF("Error closing file: %d\n", ret);
+		} else {
+			LOG_INF("close %s successfully\n", TEST_FILE);
+		}
 	}
 
 err_unmount:
