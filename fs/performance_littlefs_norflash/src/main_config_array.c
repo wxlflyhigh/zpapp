@@ -19,7 +19,7 @@
 /* 测试配置 */
 #define TEST_BLOCK_SIZE_MAX     (32*1024)           /* 测试块最大大小 */
 #define TEST_FILE_NAME      "/lfs1/test.bin"
-#define TEST_ITERATIONS     (5)
+#define TEST_ITERATIONS     (10)
 
 #define CHECK_READ_DATA (0) //  是否检查读出数据的有效性
 #define RW_DATA_PATTREN (0xA5)
@@ -63,25 +63,92 @@ static uint8_t buffer[TEST_BLOCK_SIZE_MAX] __attribute__((aligned(4096)));
 static uint8_t expected_buffer[TEST_BLOCK_SIZE_MAX];
 #endif
 
-
-static const uint32_t file_lengths[] = {
-    4*1024,
-    16*1024,
-    64*1024
-    };
-
-static const uint32_t block_lengths[] = {
-    128,
-    256,
-    512,
-    1024,
-    4*1024,
-    8*1024,
-    16*1024
-};
-
 /* 全局统计 */
 static struct perf_stats stats[TEST_ITERATIONS];
+
+static struct fs_test_config configs[] = {
+    // {4*1024, 128, 1},
+    // {64*1024, 4*1024, 0},
+
+#if 1
+    { 4*1024,     64, 0},
+    { 4*1024,    128, 0},
+    { 4*1024,    256, 0},
+    { 4*1024,    512, 0},
+    { 4*1024,   1024, 0},
+    { 4*1024, 2*1024, 0},
+    { 4*1024, 4*1024, 0},
+      
+    { 8*1024,     64, 0},
+    { 8*1024,    128, 0},
+    { 8*1024,    256, 0},
+    { 8*1024,    512, 0},
+    { 8*1024,   1024, 0},
+    { 8*1024, 2*1024, 0},
+    { 8*1024, 4*1024, 0},
+      
+    {16*1024,     64, 0},
+    {16*1024,    128, 0},
+    {16*1024,    256, 0},
+    {16*1024,    512, 0},
+    {16*1024,   1024, 0},
+    {16*1024, 2*1024, 0},
+    {16*1024, 4*1024, 0},
+    
+    {32*1024,     64, 0},
+    {32*1024,    128, 0},
+    {32*1024,    256, 0},
+    {32*1024,    512, 0},
+    {32*1024,   1024, 0},
+    {32*1024, 2*1024, 0},
+    {32*1024, 4*1024, 0},
+
+    {64*1024,     64, 0},
+    {64*1024,    128, 0},
+    {64*1024,    256, 0},
+    {64*1024,    512, 0},
+    {64*1024,   1024, 0},
+    {64*1024, 2*1024, 0},
+    {64*1024, 4*1024, 0},
+
+// random access
+    { 4*1024,     64, 1},
+    { 4*1024,    128, 1},
+    { 4*1024,    256, 1},
+    { 4*1024,    512, 1},
+    { 4*1024,   1024, 1},
+    { 4*1024, 2*1024, 1},
+    { 4*1024, 4*1024, 1},
+    { 8*1024,     64, 1},
+    { 8*1024,    128, 1},
+    { 8*1024,    256, 1},
+    { 8*1024,    512, 1},
+    { 8*1024,   1024, 1},
+    { 8*1024, 2*1024, 1},
+    { 8*1024, 4*1024, 1},
+    {16*1024,     64, 1},
+    {16*1024,    128, 1},
+    {16*1024,    256, 1},
+    {16*1024,    512, 1},
+    {16*1024,   1024, 1},
+    {16*1024, 2*1024, 1},
+    {16*1024, 4*1024, 1},
+    {32*1024,     64, 1},
+    {32*1024,    128, 1},
+    {32*1024,    256, 1},
+    {32*1024,    512, 1},
+    {32*1024,   1024, 1},
+    {32*1024, 2*1024, 1},
+    {32*1024, 4*1024, 1},
+    {64*1024,     64, 1},
+    {64*1024,    128, 1},
+    {64*1024,    256, 1},
+    {64*1024,    512, 1},
+    {64*1024,   1024, 1},
+    {64*1024, 2*1024, 1},
+    {64*1024, 4*1024, 1},
+#endif
+};
 
 FS_LITTLEFS_DECLARE_DEFAULT_CONFIG(storage);
 static struct fs_mount_t lfs_storage_mnt = {
@@ -173,7 +240,6 @@ static int test_sequential_write(struct perf_stats *stat)
 
         total_written += rc;
         stat->write_operations_completed++;
-        rc = 0;
     }
 
 out:
@@ -260,7 +326,6 @@ static int test_sequential_read(struct perf_stats *stat)
 
         total_read += rc;
         stat->read_operations_completed++;
-        rc = 0;
     }
 
 out:
@@ -287,16 +352,14 @@ out:
 static void display_performance_results(struct fs_test_config *config, struct perf_stats *stats)
 {
     printk("\n====== LittleFS Performance Results ======\n");
-    printk("file_size %d bytes, block_size %d bytes, random access %d. "
-            "Average read speed %d KB/s. Average write speed %u.%.2u KB/s. "
-            "ReadSuccessRate %u%%, WriteSuccessRate %u%%\n", 
+    printk("file_size %d bytes, block_size %d bytes, random access %d. Average read speed %d KB/s. Average write speed %u.%.2u KB/s. ReadSuccessRate %u%%, WriteSuccessRate%u%%\n", 
         config->file_size_bytes, config->block_size_bytes, config->random_access, 
         config->avg_read_speed, config->avg_write_speed / WRITE_SPEED_MULTIPLIER, config->avg_write_speed % WRITE_SPEED_MULTIPLIER,
         config->read_success_rate_x100, config->write_success_rate_x100);
 
     for (int i = 0; i < TEST_ITERATIONS; i++) {
         struct perf_stats *stat = &stats[i];
-        printk("[%d] WriteSuccess %d, Completed Operations %u; ReadSuccess %d, Completed Operations %u\n",
+        printk("[%d] WriteSuccess %d, Completed Operations %u; WriteSuccess %d, Completed Operations %u\n",
             i, stat->write_success, stat->write_operations_completed, stat->read_success, stat->read_operations_completed);
         printk("[%d] Sequential Write: %llu ms, %llu us, %u.%.2u KB/s\n", 
             i, stat->write_time_ms, stat->write_time_us,
@@ -305,7 +368,7 @@ static void display_performance_results(struct fs_test_config *config, struct pe
             i, stat->read_time_ms, stat->read_time_us, stat->read_speed_kbps);
 
     }
-    printk("======================================\n\n");
+    printk("======================================\n");
 }
 
 /* 主测试函数 */
@@ -322,107 +385,75 @@ int main(void) {
 
     print_file_system_status();
 
-    int total_cases = 2*ARRAY_SIZE(block_lengths)*ARRAY_SIZE(file_lengths);
-    int case_number = 0;
-    struct fs_test_config test_config;
-    for (int random = 0; random < 2; random++) {
-        for (size_t block = 0; block < ARRAY_SIZE(block_lengths); block++) {
-            for (size_t flen = 0; flen < ARRAY_SIZE(file_lengths); flen++) {
-                // 设置测试参数
-                memset(&test_config, 0, sizeof(struct fs_test_config));
-                test_config.file_size_bytes =  file_lengths[flen];
-                test_config.block_size_bytes = block_lengths[block];
-                test_config.random_access = random;
-                case_number++;
+    int config_nums = (sizeof(configs) / sizeof(configs[0]));
+    for (int c = 0; c < config_nums; c++) {
+        struct fs_test_config *config = &configs[c];
+        if (config->block_size_bytes > TEST_BLOCK_SIZE_MAX) {
+            printk("ERROR: block_size %d exceeds %d\n", config->block_size_bytes, TEST_BLOCK_SIZE_MAX);
+            continue;
+        }
+        printk("test [%d:%d] file_size %d bytes, block_size %d bytes, random access %d\n", 
+            c, config_nums,
+            config->file_size_bytes, config->block_size_bytes, config->random_access);
 
-                struct fs_test_config *config = &test_config;
-                if (config->block_size_bytes > config->file_size_bytes) {
-                    printk("skip: [%d:%d] file %u bytes, block %u bytes, random access %d\n",
-                        case_number, total_cases,
-                        config->file_size_bytes, config->block_size_bytes, config->random_access);
-                    continue;
-                }
+        memset(stats, 0, sizeof(stats[0]) * TEST_ITERATIONS);
+        for (int i = 0; i < TEST_ITERATIONS; i++) {
+            (void)fs_unlink(TEST_FILE_NAME);
+            struct perf_stats *stat = &stats[i];
+            stat->config = config;
 
-                if (config->block_size_bytes > TEST_BLOCK_SIZE_MAX) {
-                    printk("ERROR: block_size %d exceeds %d\n", config->block_size_bytes, TEST_BLOCK_SIZE_MAX);
-                    continue;
-                }
+            /* 测试1: 顺序写入 */
+            // print_file_system_status();
+            // printk("Test 1: Sequential write test...\n");
+            rc = test_sequential_write(stat);
+            if (rc != 0) {
+                printk("[%d] Sequential write test failed: %d\n", i, rc);
+                return rc;
+            }
 
-                printk("test: [%d:%d] file %d bytes, block %d bytes, random access %d\n", 
-                    case_number, total_cases,
-                    config->file_size_bytes, config->block_size_bytes, config->random_access);
+            /* 测试2: 顺序读取 */
+            // print_file_system_status();
+            // printk("Test 2: Sequential read test...\n");
+            rc = test_sequential_read(stat);
+            if (rc != 0) {
+                printk("[%d] Sequential read test failed: %d\n", i, rc);
+                return rc;
+            }
 
-                memset(stats, 0, sizeof(stats[0]) * TEST_ITERATIONS);
-                for (int i = 0; i < TEST_ITERATIONS; i++) {
-                    (void)fs_unlink(TEST_FILE_NAME);
-                    struct perf_stats *stat = &stats[i];
-                    stat->config = config;
+        }
 
-                    /* 测试1: 顺序写入 */
-                    // print_file_system_status();
-                    // printk("Test 1: Sequential write test...\n");
-                    rc = test_sequential_write(stat);
-                    if (rc != 0) {
-                        printk("[%d] Sequential write test failed: %d\n", i, rc);
-                        // return rc;
-                    }
+        /* 计算均值 */
+        uint32_t total_read_speed = 0;
+        uint32_t total_write_speed = 0;
+        uint32_t read_success_times = 0;
+        uint32_t write_success_times = 0;
+        for (int i = 0; i < TEST_ITERATIONS; i++) {
+            struct perf_stats *stat = &stats[i];
 
-                    /* 测试2: 顺序读取 */
-                    // print_file_system_status();
-                    // printk("Test 2: Sequential read test...\n");
-                    rc = test_sequential_read(stat);
-                    if (rc != 0) {
-                        printk("[%d] Sequential read test failed: %d\n", i, rc);
-                        // return rc;
-                    }
+            stat->read_time_us = (stat->read_time_cycles * 1000000ULL) / cycles_per_sec;
+            stat->write_time_us = (stat->write_time_cycles * 1000000ULL) / cycles_per_sec;
+            stat->read_speed_kbps = (int)(((float)stat->read_bytes / 1024 * cycles_per_sec) / stat->read_time_cycles);
+            stat->write_speed_kbps = (int)(((float)stat->written_bytes / 1024 * cycles_per_sec * WRITE_SPEED_MULTIPLIER) / stat->write_time_cycles);
 
-                }
+            total_read_speed += stat->read_speed_kbps;
+            total_write_speed += stat->write_speed_kbps;
 
-                /* 计算均值, 只有成功的 iteration 参与均值计算，
-                    以防0处失败时，read_bytes/written_bytes 为0，导致计算的速度为0*/
-                uint32_t total_read_speed = 0;
-                uint32_t total_write_speed = 0;
-                uint32_t read_success_times = 0;
-                uint32_t write_success_times = 0;
-                for (int i = 0; i < TEST_ITERATIONS; i++) {
-                    struct perf_stats *stat = &stats[i];
-
-                    stat->read_time_us = (stat->read_time_cycles * 1000000ULL) / cycles_per_sec;
-                    stat->write_time_us = (stat->write_time_cycles * 1000000ULL) / cycles_per_sec;
-                    stat->read_speed_kbps = (int)(((float)stat->read_bytes / 1024 * cycles_per_sec) / stat->read_time_cycles);
-                    stat->write_speed_kbps = (int)(((float)stat->written_bytes / 1024 * cycles_per_sec * WRITE_SPEED_MULTIPLIER) / stat->write_time_cycles);
-
-                    if (stat->read_success) {
-                        read_success_times++;
-                        total_read_speed += stat->read_speed_kbps;
-                    }
-                    if (stat->write_success) {
-                        write_success_times++;
-                        total_write_speed += stat->write_speed_kbps;
-                    }
-                }
-                if (read_success_times > 0) {
-                    config->avg_read_speed = total_read_speed / read_success_times;
-                } else {
-                    config->avg_read_speed = -1;
-                }
-
-                if (write_success_times > 0) {
-                    config->avg_write_speed = total_write_speed / write_success_times;
-                } else {
-                    config->avg_write_speed = -1;
-                }
-
-                config->read_success_rate_x100  = read_success_times * 100 / TEST_ITERATIONS;
-                config->write_success_rate_x100 = write_success_times * 100 / TEST_ITERATIONS;
-
-                /* 显示结果 */
-                display_performance_results(config, stats);
+            if (stat->read_success) {
+                read_success_times++;
+            }
+            if (stat->write_success) {
+                write_success_times++;
             }
         }
-    }
+        config->avg_read_speed  = total_read_speed / TEST_ITERATIONS;
+        config->avg_write_speed = total_write_speed / TEST_ITERATIONS;
+        config->read_success_rate_x100 = read_success_times*100/(config->file_size_bytes/config->block_size_bytes);
+        config->write_success_rate_x100 = write_success_times*100/(config->file_size_bytes/config->block_size_bytes);
 
-    printk("\n***** Finish LittleFS on NOR Flash Performance Test *****\n");
+        /* 显示结果 */
+        display_performance_results(config, stats);
+
+    }
 
     return 0;
 }
