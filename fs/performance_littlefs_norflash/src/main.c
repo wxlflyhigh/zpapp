@@ -13,16 +13,17 @@
 #include <stdlib.h>
 
 /* 测试配置 */
-#define TEST_PARTITION        storage_partition  /* Flash 分区标签 */
+#define TEST_PARTITION        demo_storage_partition  /* Flash 分区标签 */
 #define TEST_MOUNT_POINT      "/lfs1"
 
 /* 测试配置 */
 #define TEST_BLOCK_SIZE_MAX     (32*1024)           /* 测试块最大大小 */
 #define TEST_FILE_NAME      "/lfs1/test.bin"
-#define TEST_ITERATIONS     (5)
+#define TEST_ITERATIONS     (10)
 
 #define CHECK_READ_DATA (0) //  是否检查读出数据的有效性
-#define RW_DATA_PATTREN (0xA5)
+#define RW_DATA_PATTREN_BASE (0xA0)
+static unsigned char grw_data_pattern = 0xA0;
 
 // 随机写的时候，速度可能小于1，而 printk 不支持打印浮点，所以放大显示
 #define WRITE_SPEED_MULTIPLIER (100)
@@ -65,9 +66,12 @@ static uint8_t expected_buffer[TEST_BLOCK_SIZE_MAX];
 
 
 static const uint32_t file_lengths[] = {
-    4*1024,
-    16*1024,
-    64*1024
+    // 4*1024,
+    // 8*1024,
+    // 16*1024,
+    // 32*1024,
+    // 64*1024,
+    128*1024,
     };
 
 static const uint32_t block_lengths[] = {
@@ -144,7 +148,7 @@ static int test_sequential_write(struct perf_stats *stat)
     }
     
     /* 生成测试数据 */
-    generate_test_data(buffer, block_size, RW_DATA_PATTREN);
+    generate_test_data(buffer, block_size, grw_data_pattern);
     
     /* 开始计时 */
     start_time   = k_uptime_get();
@@ -221,7 +225,7 @@ static int test_sequential_read(struct perf_stats *stat)
 
 #if CHECK_READ_DATA
     /* 生成预期数据 */
-    generate_test_data(expected_buffer, block_size, RW_DATA_PATTREN);
+    generate_test_data(expected_buffer, block_size, grw_data_pattern);
 #endif
 
     /* 开始计时 */
@@ -325,7 +329,7 @@ int main(void) {
     int total_cases = 2*ARRAY_SIZE(block_lengths)*ARRAY_SIZE(file_lengths);
     int case_number = 0;
     struct fs_test_config test_config;
-    for (int random = 0; random < 2; random++) {
+    for (int random = 0; random < 1; random++) {
         for (size_t block = 0; block < ARRAY_SIZE(block_lengths); block++) {
             for (size_t flen = 0; flen < ARRAY_SIZE(file_lengths); flen++) {
                 // 设置测试参数
@@ -336,7 +340,9 @@ int main(void) {
                 case_number++;
 
                 struct fs_test_config *config = &test_config;
-                if (config->block_size_bytes > config->file_size_bytes) {
+                if ((config->block_size_bytes > config->file_size_bytes) 
+                    // || (config->random_access && config->file_size_bytes > 16*1024)
+                    ) {
                     printk("skip: [%d:%d] file %u bytes, block %u bytes, random access %d\n",
                         case_number, total_cases,
                         config->file_size_bytes, config->block_size_bytes, config->random_access);
@@ -354,10 +360,12 @@ int main(void) {
 
                 memset(stats, 0, sizeof(stats[0]) * TEST_ITERATIONS);
                 for (int i = 0; i < TEST_ITERATIONS; i++) {
+                    grw_data_pattern = RW_DATA_PATTREN_BASE + i;
                     (void)fs_unlink(TEST_FILE_NAME);
                     struct perf_stats *stat = &stats[i];
                     stat->config = config;
 
+                    printk("iteration: %d:%d\n", i, TEST_ITERATIONS);
                     /* 测试1: 顺序写入 */
                     // print_file_system_status();
                     // printk("Test 1: Sequential write test...\n");
