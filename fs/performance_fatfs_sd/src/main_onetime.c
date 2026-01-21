@@ -31,7 +31,7 @@ LOG_MODULE_REGISTER(fatfs_sd);
 /* 测试配置 */
 #define TEST_BLOCK_SIZE_MAX     (32*1024)           /* 测试块最大大小 */
 #define TEST_FILE_NAME      "/SD:/test.dat"
-#define TEST_ITERATIONS     (3)
+#define TEST_ITERATIONS     (1)
 
 #define CHECK_READ_DATA (0) //  是否检查读出数据的有效性
 #define RW_DATA_PATTREN (0xA5)
@@ -57,8 +57,10 @@ struct perf_stats {
     uint32_t read_operations_completed;
 };
 
+__attribute__((aligned(32))) 
 static uint8_t buffer[TEST_BLOCK_SIZE_MAX];
 #if CHECK_READ_DATA
+__attribute__((aligned(32))) 
 static uint8_t expected_buffer[TEST_BLOCK_SIZE_MAX];
 #endif
 
@@ -66,7 +68,7 @@ static uint8_t expected_buffer[TEST_BLOCK_SIZE_MAX];
 static struct perf_stats stats[TEST_ITERATIONS];
 
 static struct fs_test_config configs[] = {
-    {4*1024*1024, 4*1024, 0},
+    {1*1024*1024, 4*1024, 0},
     // {8*1024*1024, 16*1024, 1},
     // {8*1024*1024, 32*1024, 0},
     // {8*1024*1024, 32*1024, 1},
@@ -152,8 +154,11 @@ static int test_sequential_write_and_read(struct perf_stats *stat)
     uint32_t file_size = stat->config->file_size_bytes;
     uint32_t chunk_size;    // chunk size read or write each time
 
+    printf("read&write buffer %p\n", buffer);
+
     /* 打开文件用于写入 */
     fs_file_t_init(&file);
+
     rc = fs_open(&file, TEST_FILE_NAME, FS_O_CREATE | FS_O_WRITE);
     if (rc < 0) {
         printk("Failed to open file for writing: %d\n", rc);

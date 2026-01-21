@@ -3,6 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+#include "ameba_soc.h"
 
 #include <stdio.h>
 #include <zephyr/logging/log.h>
@@ -12,6 +13,7 @@
 #include <zephyr/fs/fs_sys.h>
 #include <zephyr/sys/printk.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include <ff.h>
 #include "diag.h"
@@ -29,17 +31,22 @@ LOG_MODULE_REGISTER(fatfs_sd);
 #define TEST_FILE	FATFS_MNTP"/testfile.txt"
 
 /* 测试配置 */
+#define SYNC_AFTER_WRITE (1)
+#define USE_SYSRAND (0)
 #define TEST_BLOCK_SIZE_MAX     (32*1024)           /* 测试块最大大小 */
 #define TEST_FILE_NAME      "/SD:/test.dat"
-#define TEST_ITERATIONS     (5)
+#define TEST_ITERATIONS     (2)
 
-#define CHECK_READ_DATA (0) //  是否检查读出数据的有效性
-#define RW_DATA_PATTREN (0xA5)
+#define CHECK_READ_DATA (1) //  是否检查读出数据的有效性
+#define RW_DATA_PATTREN_BASE (0xA5)
+static unsigned char grw_data_pattern = 0x50;
 
 struct fs_test_config {
     uint32_t file_size_bytes;   // total file size
     uint32_t block_size_bytes;  // read/write size each time
     bool random_access;
+    uint32_t rows;
+    uint32_t cols;
 
     uint32_t avg_write_speed;
     uint32_t avg_read_speed;
@@ -49,6 +56,7 @@ struct fs_test_config {
 struct perf_stats {
     struct fs_test_config *config;
     uint64_t write_time_ms;
+    uint32_t write_time_us;
     uint64_t read_time_ms;
     uint32_t write_speed_kbps;
     uint32_t read_speed_kbps;
@@ -56,8 +64,11 @@ struct perf_stats {
     uint32_t read_operations_completed;
 };
 
+__attribute__((aligned(32))) 
 static uint8_t buffer[TEST_BLOCK_SIZE_MAX];
+
 #if CHECK_READ_DATA
+__attribute__((aligned(32))) 
 static uint8_t expected_buffer[TEST_BLOCK_SIZE_MAX];
 #endif
 
@@ -65,37 +76,31 @@ static uint8_t expected_buffer[TEST_BLOCK_SIZE_MAX];
 static struct perf_stats stats[TEST_ITERATIONS];
 
 static struct fs_test_config configs[] = {
-    // {8*1024*1024, 16*1024, 0},
-    // {8*1024*1024, 16*1024, 1},
-    // {8*1024*1024, 32*1024, 0},
-    // {8*1024*1024, 32*1024, 1},
+    // {4*1024*1024, 32*1024, 0},
+    {4*1024*1024, 32*1024, 0},
+    {4*1024*1024, 32*1024, 1},
 
-#if 1
+    // {512*1024, 32*1024, 0},
+    // {512*1024, 32*1024, 1},
+
+#if 0
     {4*1024*1024,  4*1024,  0},
     {4*1024*1024,  8*1024,  0},
     {4*1024*1024,  16*1024, 0},
     {4*1024*1024,  32*1024, 0},
-                   
-    {8*1024*1024,  4*1024,  0},
-    {8*1024*1024,  8*1024,  0},
-    {8*1024*1024,  16*1024, 0},
-    {8*1024*1024,  32*1024, 0},
 
-    {16*1024*1024, 4*1024,  0},
-    {16*1024*1024, 8*1024,  0},
-    {16*1024*1024, 16*1024, 0},
-    {16*1024*1024, 32*1024, 0},
-    
     /* rand access */
     {4*1024*1024,  4*1024,  1},
     {4*1024*1024,  8*1024,  1},
     {4*1024*1024,  16*1024, 1},
     {4*1024*1024,  32*1024, 1},
+#endif
 
-    {8*1024*1024,  4*1024,  1},
-    {8*1024*1024,  8*1024,  1},
-    {8*1024*1024,  16*1024, 1},
-    {8*1024*1024,  32*1024, 1},
+#if 0
+    {16*1024*1024, 4*1024,  0},
+    {16*1024*1024, 8*1024,  0},
+    {16*1024*1024, 16*1024, 0},
+    {16*1024*1024, 32*1024, 0},
 
     {16*1024*1024, 4*1024,  1},
     {16*1024*1024, 8*1024,  1},
@@ -103,18 +108,26 @@ static struct fs_test_config configs[] = {
     {16*1024*1024, 32*1024, 1},
 #endif
 
-#if 1
-    {8*1024*1024,  128,     0},
-    {8*1024*1024,  256,     0},
-    {8*1024*1024,  512,     0},
-    {8*1024*1024,  1*1024,  0},
-    {8*1024*1024,  2*1024,  0},
+#if 0
+    // {8*1024*1024,  128,     0},
+    // {8*1024*1024,  256,     0},
+    // {8*1024*1024,  512,     0},
+    // {8*1024*1024,  1*1024,  0},
+    // {8*1024*1024,  2*1024,  0},
+    // {8*1024*1024,  4*1024,  0},
+    // {8*1024*1024,  8*1024,  0},
+    // {8*1024*1024,  16*1024, 0},
+    // {8*1024*1024,  32*1024, 0},
 
-    {8*1024*1024,  128,     1},
-    {8*1024*1024,  256,     1},
-    {8*1024*1024,  512,     1},
-    {8*1024*1024,  1*1024,  1},
-    {8*1024*1024,  2*1024,  1},
+    // {8*1024*1024,  128,     1},
+    // {8*1024*1024,  256,     1},
+    // {8*1024*1024,  512,     1},
+    // {8*1024*1024,  1*1024,  1},
+    // {8*1024*1024,  2*1024,  1},
+    // {8*1024*1024,  4*1024,  1},
+    // {8*1024*1024,  8*1024,  1},
+    // {8*1024*1024,  16*1024, 1},
+    // {8*1024*1024,  32*1024, 1},
 #endif
 };
 
@@ -127,8 +140,99 @@ static struct fs_mount_t fatfs_mnt = {
 	.mnt_point = FATFS_MNTP,
 	.fs_data = &fat_fs,
 };
+/******************************************************************/
+#define RANDOM_RANGE (1024)
+
+// 全局变量：随机排列
+int randrows[RANDOM_RANGE];  // 行的随机排列
+int randcols[RANDOM_RANGE];  // 列的随机排列
+
+// 初始化随机排列
+void RandomPermutationsInitialize(int M, int N) {
+    if (M > RANDOM_RANGE || N > RANDOM_RANGE) {
+        printf("random exceed %d. m=%d, n=%d\n", RANDOM_RANGE, M, N);
+        return;
+    }
+
+    // 初始化randrows数组为0到M-1
+    for (int i = 0; i < M; i++) {
+        randrows[i] = i;
+    }
+    
+    // 初始化randcols数组为0到N-1
+    for (int j = 0; j < N; j++) {
+        randcols[j] = j;
+    }
+    
+    // 打乱randrows数组 (Fisher-Yates洗牌算法)
+    for (int i = M - 1; i > 0; i--) {
+        int j = sys_rand32_get() % (i + 1);
+        // 交换randrows[i]和randrows[j]
+        int temp = randrows[i];
+        randrows[i] = randrows[j];
+        randrows[j] = temp;
+    }
+    
+    // 打乱randcols数组 (Fisher-Yates洗牌算法)
+    for (int i = N - 1; i > 0; i--) {
+        int j = sys_rand32_get() % (i + 1);
+        // 交换randcols[i]和randcols[j]
+        int temp = randcols[i];
+        randcols[i] = randcols[j];
+        randcols[j] = temp;
+    }
+
+#if 1
+    // 打印随机排列
+    printf("rand rows: ");
+    for (int i = 0; i < M; i++) {
+        printf("%d ", randrows[i]);
+    }
+    printf("\n");
+    
+    printf("rand columns: ");
+    for (int j = 0; j < N; j++) {
+        printf("%d ", randcols[j]);
+    }
+    printf("\n\n");
+#endif
+
+    DCache_Clean((uint32_t)randrows, sizeof(randrows[0])*M);
+    DCache_Clean((uint32_t)randcols, sizeof(randcols[0])*N);
+}
+
+static uint32_t RandomPermutationsGet(uint32_t row, uint32_t col, uint32_t columns) {
+    uint32_t value = randrows[row] * columns + randcols[col];
+    return value;
+}
 
 /******************************************************************/
+static uint32_t last_offset = 0;
+uint32_t get_random(uint32_t file_size, uint32_t block_size) {
+    uint32_t offset;
+    do {
+#if 1
+    // 重复率高
+        offset = sys_rand32_get() % (file_size/block_size) * block_size;
+#endif
+
+#if 0
+    // 重复率高
+        offset = sys_rand32_get() % file_size;
+        offset = offset / block_size *block_size;
+#endif
+
+#if 0
+        // 重复率高
+        offset = _rand() % file_size;
+        offset = offset / block_size *block_size;
+#endif
+    } while(offset == last_offset);
+
+    last_offset = offset;
+    return offset;
+}
+
 /* 生成测试数据 */
 static void generate_test_data(uint8_t *buffer, size_t size, uint8_t pattern)
 {
@@ -139,18 +243,20 @@ static void generate_test_data(uint8_t *buffer, size_t size, uint8_t pattern)
 #else
     memset(buffer, pattern&0xFF, size);
 #endif
+
+    DCache_Clean((uint32_t)buffer, size);
 }
 
 /* 测试顺序写入 */
-static int test_sequential_write(struct perf_stats *stat)
+static int test_write(struct perf_stats *stat)
 {
     struct fs_file_t file;
     int rc;
     int64_t start_time, end_time;
+    uint32_t start_time_us, end_time_us;
     uint32_t block_size = stat->config->block_size_bytes;  // buffer_size
     uint32_t file_size = stat->config->file_size_bytes;
     uint32_t chunk_size;    // chunk size read or write each time
-    // DiagPrintf("block_size %d, file_size %d\n", block_size, file_size);
 
     /* 打开文件用于写入 */
     fs_file_t_init(&file);
@@ -161,16 +267,26 @@ static int test_sequential_write(struct perf_stats *stat)
     }
     
     /* 生成测试数据 */
-    generate_test_data(buffer, block_size, RW_DATA_PATTREN);
+    generate_test_data(buffer, block_size, grw_data_pattern);
     
     /* 开始计时 */
     start_time = k_uptime_get();
-    
-    /* 连续写入 */
+    start_time_us = DTimestamp_Get();
+
+    /* 写入 */
     size_t total_written = 0;
+    uint32_t offset;
+    int row = 0;
+    int col = 0;
     while (total_written < file_size) {
         if (stat->config->random_access) {
-            uint32_t offset = sys_rand32_get() % (file_size/block_size) * block_size;
+#if USE_SYSRAND
+            offset = get_random(file_size, block_size);
+#else
+            offset = RandomPermutationsGet(row, col, stat->config->cols);
+            offset = offset * block_size;
+#endif
+            // DiagPrintf("[%d][%d] %u\n", row, col, offset);
             rc = fs_seek(&file, offset, FS_SEEK_SET);
             if (rc < 0) {
                 printk("Seek failed: %d, offset %d\n", rc, offset);
@@ -185,15 +301,34 @@ static int test_sequential_write(struct perf_stats *stat)
             fs_close(&file);
             return rc;
         }
+
         total_written += rc;
         stat->write_operations_completed++;
+
+        col++;
+        if (col == stat->config->cols) {
+            row++;
+            col = 0;
+        }
         // DiagPrintf("%d, %d. %d\n", chunk_size, total_written, stat->write_operations_completed);
+
+#if CHECK_READ_DATA
+        if (stat->write_operations_completed == 1) {
+            printk("%u, %u, %u, %u\n", buffer[0], buffer[4], buffer[8], buffer[12]);
+        }
+#endif
     }
-    
+
+    #if SYNC_AFTER_WRITE
+        fs_sync(&file);
+    #endif
+
     /* 结束计时 */
     end_time = k_uptime_get();
+    end_time_us = DTimestamp_Get();
     
     /* 计算性能 */
+    stat->write_time_us = end_time_us - start_time_us;
     stat->write_time_ms = (end_time - start_time);
     stat->write_speed_kbps = (int)(((float)file_size / 1024 * 1000) / stat->write_time_ms);
     
@@ -207,10 +342,11 @@ static int test_sequential_write(struct perf_stats *stat)
 }
 
 /* 测试顺序读取 */
-static int test_sequential_read(struct perf_stats *stat)
+static int test_read(struct perf_stats *stat)
 {
     struct fs_file_t file;
     int rc;
+    uint32_t offset;
     int64_t start_time, end_time;
     uint32_t block_size = stat->config->block_size_bytes;  // buffer_size
     uint32_t file_size = stat->config->file_size_bytes;
@@ -226,17 +362,25 @@ static int test_sequential_read(struct perf_stats *stat)
 
 #if CHECK_READ_DATA
     /* 生成预期数据 */
-    generate_test_data(expected_buffer, block_size, RW_DATA_PATTREN);
+    generate_test_data(expected_buffer, block_size, grw_data_pattern);
 #endif
 
     /* 开始计时 */
     start_time = k_uptime_get();
     
-    /* 连续读取并验证 */
+    /* 读取并验证 */
+    int row = 0;
+    int col = 0;
     size_t total_read = 0;
     while (total_read < file_size) {
         if (stat->config->random_access) {
-            uint32_t offset = sys_rand32_get() % (file_size/block_size) * block_size;
+#if USE_SYSRAND
+            offset = get_random(file_size, block_size);
+#else
+            offset = RandomPermutationsGet(row, col, stat->config->cols);
+            offset = offset * block_size;
+#endif
+            // DiagPrintf("%u\n", offset);
             rc = fs_seek(&file, offset, FS_SEEK_SET);
             if (rc < 0) {
                 printk("Seek failed: %d, offset %d\n", rc, offset);
@@ -252,7 +396,14 @@ static int test_sequential_read(struct perf_stats *stat)
             return rc;
         }
 
+        total_read += rc;
+        stat->read_operations_completed++;
+
 #if CHECK_READ_DATA
+        if (stat->read_operations_completed == 1) {
+            printk("%u, %u, %u, %u\n", buffer[0], buffer[4], buffer[8], buffer[12]);
+        }
+
         /* 验证数据完整性 */
         if (memcmp(buffer, expected_buffer, rc) != 0) {
             printk("ERROR: Data verification failed at offset %zu\n", total_read);
@@ -260,9 +411,6 @@ static int test_sequential_read(struct perf_stats *stat)
             return -1;
         }
 #endif
-
-        total_read += rc;
-        stat->read_operations_completed++;
     }
     
     /* 结束计时 */
@@ -276,137 +424,6 @@ static int test_sequential_read(struct perf_stats *stat)
     return 0;
 }
 
-#if 0
-/* 测试随机访问 */
-static int test_random_access(void)
-{
-    struct fs_file_t file;
-    uint8_t buffer[512];
-    int rc;
-    int64_t start_time;
-    uint32_t iterations = 1000;  /* 随机访问1000次 */
-    
-    fs_file_t_init(&file);
-    rc = fs_open(&file, TEST_FILE_NAME, FS_O_RDWR);
-    if (rc < 0) {
-        printk("Failed to open file for random access: %d\n", rc);
-        return rc;
-    }
-    
-    start_time = k_uptime_get();
-    
-    for (uint32_t i = 0; i < iterations; i++) {
-        /* 随机位置 */
-        off_t offset = (i * 997) % (TEST_FILE_SIZE - sizeof(buffer));
-        
-        /* 定位 */
-        rc = fs_seek(&file, offset, FS_SEEK_SET);
-        if (rc < 0) {
-            printk("Seek failed: %d\n", rc);
-            break;
-        }
-        
-        /* 随机读取 */
-        rc = fs_read(&file, buffer, sizeof(buffer));
-        if (rc < 0) {
-            printk("Random read failed: %d\n", rc);
-            break;
-        }
-        
-        /* 随机写入 */
-        rc = fs_seek(&file, offset, FS_SEEK_SET);
-        if (rc < 0) {
-            printk("Seek failed: %d\n", rc);
-            break;
-        }
-        
-        generate_test_data(buffer, sizeof(buffer), i & 0xFF);
-        rc = fs_write(&file, buffer, sizeof(buffer));
-        if (rc < 0) {
-            printk("Random write failed: %d\n", rc);
-            break;
-        }
-    }
-    
-    fs_close(&file);
-    
-    int64_t time_us = (k_uptime_get() - start_time) * 1000;
-    printk("Random access: %d operations in %lld us, %lld us/op\n",
-           iterations, time_us, time_us / iterations);
-    
-    return 0;
-}
-
-/* 测试小文件操作 */
-static int test_small_files(void)
-{
-    char filename[32];
-    struct fs_file_t file;
-    uint8_t buffer[128];
-    int rc;
-    int64_t start_time;
-    uint32_t file_count = 100;
-    
-    /* 创建多个小文件 */
-    start_time = k_uptime_get();
-    
-    for (uint32_t i = 0; i < file_count; i++) {
-        snprintf(filename, sizeof(filename), "/SD:/small_%04d.dat", i);
-        
-        fs_file_t_init(&file);
-        rc = fs_open(&file, filename, FS_O_CREATE | FS_O_WRITE);
-        if (rc < 0) {
-            printk("Failed to create file %s: %d\n", filename, rc);
-            continue;
-        }
-        
-        generate_test_data(buffer, sizeof(buffer), i & 0xFF);
-        rc = fs_write(&file, buffer, sizeof(buffer));
-        fs_close(&file);
-        
-        if (rc < 0) {
-            printk("Failed to write file %s: %d\n", filename, rc);
-        }
-    }
-    
-    int64_t create_time = (k_uptime_get() - start_time) * 1000;
-    
-    /* 读取小文件 */
-    start_time = k_uptime_get();
-    
-    for (uint32_t i = 0; i < file_count; i++) {
-        snprintf(filename, sizeof(filename), "/SD:/small_%04d.dat", i);
-        
-        fs_file_t_init(&file);
-        rc = fs_open(&file, filename, FS_O_READ);
-        if (rc < 0) {
-            printk("Failed to open file %s: %d\n", filename, rc);
-            continue;
-        }
-        
-        rc = fs_read(&file, buffer, sizeof(buffer));
-        fs_close(&file);
-        
-        if (rc < 0) {
-            printk("Failed to read file %s: %d\n", filename, rc);
-        }
-    }
-    
-    int64_t read_time = (k_uptime_get() - start_time) * 1000;
-    
-    printk("Small files: Create %d files in %lld us, Read in %lld us\n",
-           file_count, create_time, read_time);
-    
-    /* 清理小文件 */
-    for (uint32_t i = 0; i < file_count; i++) {
-        snprintf(filename, sizeof(filename), "/SD:/small_%04d.dat", i);
-        fs_unlink(filename);
-    }
-    
-    return 0;
-}
-#endif
-
 /* 显示性能结果 */
 static void display_performance_results(struct fs_test_config *config, struct perf_stats *stats)
 {
@@ -417,12 +434,10 @@ static void display_performance_results(struct fs_test_config *config, struct pe
 
     for (int i = 0; i < TEST_ITERATIONS; i++) {
         struct perf_stats *stat = &stats[i];
-        DiagPrintf("[%d] Sequential Write: %llu ms, %u KB/s\n", 
-            i, stat->write_time_ms, stat->write_speed_kbps);
-        DiagPrintf("[%d] Sequential Read:  %llu ms, %u KB/s\n", 
-            i, stat->read_time_ms, stat->read_speed_kbps);
-        DiagPrintf("[%d] Completed Write Operations %u, Read Operations %u\n",
-            i, stat->write_operations_completed, stat->read_operations_completed);
+        DiagPrintf("[%d] Write: Operations %u, %llu ms, %u us, %u KB/s. \n",
+            i, stat->write_operations_completed, stat->write_time_ms, stat->write_time_us, stat->write_speed_kbps);
+        DiagPrintf("[%d] Read:  Operations %u, %llu ms, %u KB/s\n",
+            i, stat->read_operations_completed, stat->read_time_ms, stat->read_speed_kbps);
     }
     DiagPrintf("======================================\n");
 }
@@ -444,6 +459,7 @@ int main(void)
     
     /* 清理旧测试文件 */
     fs_unlink(TEST_FILE_NAME);
+    LOG_INF("wr buffer  %p\n", buffer);
 
     int config_nums = (sizeof(configs) / sizeof(configs[0]));
     for (int c = 0; c < config_nums; c++) {
@@ -452,46 +468,50 @@ int main(void)
             printk("ERROR: block_size %d exceeds %d\n", config->block_size_bytes, TEST_BLOCK_SIZE_MAX);
             continue;
         }
-        printk("[%d:%d] file_size %d bytes, block_size %d bytes, random access %d\n", 
+        printk("\n\n[%d:%d] file_size %d bytes, block_size %d bytes, random access %d\n", 
             c, config_nums,
             config->file_size_bytes, config->block_size_bytes, config->random_access);
 
+        /* 预生成 随机序列 */
+        int blocks = config->file_size_bytes/config->block_size_bytes;
+        if (blocks > RANDOM_RANGE) {
+            config->cols = RANDOM_RANGE;
+            config->rows = blocks/RANDOM_RANGE;
+        } else {
+            config->rows = 1;
+            config->cols = blocks;
+        }
+        if (config->rows * config->cols != blocks) {
+            printk("ERROR: rows %d, cols %d, blocks %d\n", config->rows, config->cols, blocks);
+        }
+
+        RandomPermutationsInitialize(config->rows, config->cols);
+
         memset(stats, 0, sizeof(stats[0]) * TEST_ITERATIONS);
+
         for (int i = 0; i < TEST_ITERATIONS; i++) {
+            grw_data_pattern = RW_DATA_PATTREN_BASE + i*config_nums + c;
             struct perf_stats *stat = &stats[i];
             stat->config = config;
 
             /* 测试1: 顺序写入 */
-            printk("Test 1: Sequential write test...\n");
-            rc = test_sequential_write(stat);
+            printk("Test 1: write test... [%d]\n", grw_data_pattern);
+            rc = test_write(stat);
             if (rc != 0) {
-                printk("Sequential write test failed: %d\n", rc);
+                printk("write test failed: %d\n", rc);
                 return rc;
             }
 
+#if 1
             /* 测试2: 顺序读取 */
-            printk("Test 2: Sequential read test...\n");
-            rc = test_sequential_read(stat);
+            printk("Test 2: read test...\n");
+            rc = test_read(stat);
             if (rc != 0) {
-                printk("Sequential read test failed: %d\n", rc);
+                printk("read test failed: %d\n", rc);
                 return rc;
             }
+#endif
 
-    #if 0
-            /* 测试3: 随机访问 */
-            printk("Test 3: Random access test...\n");
-            rc = test_random_access();
-            if (rc != 0) {
-                printk("Random access test failed: %d\n", rc);
-            }
-            
-            /* 测试4: 小文件操作 */
-            printk("Test 4: Small files test...\n");
-            rc = test_small_files();
-            if (rc != 0) {
-                printk("Small files test failed: %d\n", rc);
-            }
-    #endif
         }
 
         /* 计算均值 */
