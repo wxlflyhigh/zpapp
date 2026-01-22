@@ -33,11 +33,13 @@ LOG_MODULE_REGISTER(fatfs_sd);
 /* 测试配置 */
 #define SYNC_AFTER_WRITE (1)
 #define USE_SYSRAND (0)
+
+// #define PRINT_SINGLE_WRITE_TIME (1) // 打印每次 fs_write 的耗时
 #define TEST_BLOCK_SIZE_MAX     (32*1024)           /* 测试块最大大小 */
 #define TEST_FILE_NAME      "/SD:/test.dat"
-#define TEST_ITERATIONS     (2)
+#define TEST_ITERATIONS     (3)
 
-#define CHECK_READ_DATA (1) //  是否检查读出数据的有效性
+#define CHECK_READ_DATA (0) //  是否检查读出数据的有效性
 #define RW_DATA_PATTREN_BASE (0xA5)
 static unsigned char grw_data_pattern = 0x50;
 
@@ -77,11 +79,36 @@ static struct perf_stats stats[TEST_ITERATIONS];
 
 static struct fs_test_config configs[] = {
     // {4*1024*1024, 32*1024, 0},
-    {4*1024*1024, 32*1024, 0},
-    {4*1024*1024, 32*1024, 1},
-
+    // {8*1024*1024, 32*1024, 0},
+    // {8*1024*1024, 32*1024, 1},
+    // {8*1024*1024, 32*1024, 0},
+    // {8*1024*1024, 32*1024, 1},
     // {512*1024, 32*1024, 0},
     // {512*1024, 32*1024, 1},
+
+#if 1
+    // 测试局部性
+    // {256*1024,  128,     0},
+    // {256*1024,  256,     0},
+    // {256*1024,  512,     0},
+    // {256*1024,  1*1024,  0},
+    // {256*1024,  2*1024,  0},
+    // {256*1024,  4*1024,  0},
+    // {256*1024,  8*1024,  0},
+    // {256*1024,  16*1024, 0},
+    {256*1024,  32*1024, 0},
+
+    /* rand access */
+    {256*1024,  512,     1},
+    {256*1024,  128,     1},
+    // {256*1024,  256,     1},
+    // {256*1024,  1*1024,  1},
+    // {256*1024,  2*1024,  1},
+    // {256*1024,  4*1024,  1},
+    // {256*1024,  8*1024,  1},
+    // {256*1024,  16*1024, 1},
+    // {256*1024,  32*1024, 1},
+#endif
 
 #if 0
     {4*1024*1024,  4*1024,  0},
@@ -109,25 +136,25 @@ static struct fs_test_config configs[] = {
 #endif
 
 #if 0
-    // {8*1024*1024,  128,     0},
-    // {8*1024*1024,  256,     0},
-    // {8*1024*1024,  512,     0},
-    // {8*1024*1024,  1*1024,  0},
-    // {8*1024*1024,  2*1024,  0},
-    // {8*1024*1024,  4*1024,  0},
-    // {8*1024*1024,  8*1024,  0},
-    // {8*1024*1024,  16*1024, 0},
-    // {8*1024*1024,  32*1024, 0},
+    {8*1024*1024,  128,     0},
+    {8*1024*1024,  256,     0},
+    {8*1024*1024,  512,     0},
+    {8*1024*1024,  1*1024,  0},
+    {8*1024*1024,  2*1024,  0},
+    {8*1024*1024,  4*1024,  0},
+    {8*1024*1024,  8*1024,  0},
+    {8*1024*1024,  16*1024, 0},
+    {8*1024*1024,  32*1024, 0},
 
-    // {8*1024*1024,  128,     1},
-    // {8*1024*1024,  256,     1},
-    // {8*1024*1024,  512,     1},
-    // {8*1024*1024,  1*1024,  1},
-    // {8*1024*1024,  2*1024,  1},
-    // {8*1024*1024,  4*1024,  1},
-    // {8*1024*1024,  8*1024,  1},
-    // {8*1024*1024,  16*1024, 1},
-    // {8*1024*1024,  32*1024, 1},
+    {8*1024*1024,  128,     1},
+    {8*1024*1024,  256,     1},
+    {8*1024*1024,  512,     1},
+    {8*1024*1024,  1*1024,  1},
+    {8*1024*1024,  2*1024,  1},
+    {8*1024*1024,  4*1024,  1},
+    {8*1024*1024,  8*1024,  1},
+    {8*1024*1024,  16*1024, 1},
+    {8*1024*1024,  32*1024, 1},
 #endif
 };
 
@@ -184,13 +211,13 @@ void RandomPermutationsInitialize(int M, int N) {
 
 #if 1
     // 打印随机排列
-    printf("rand rows: ");
+    printf("rand rows [%d]: ", M);
     for (int i = 0; i < M; i++) {
         printf("%d ", randrows[i]);
     }
     printf("\n");
     
-    printf("rand columns: ");
+    printf("rand columns [%d]: ", N);
     for (int j = 0; j < N; j++) {
         printf("%d ", randcols[j]);
     }
@@ -278,6 +305,7 @@ static int test_write(struct perf_stats *stat)
     uint32_t offset;
     int row = 0;
     int col = 0;
+    DiagPrintf("\n");
     while (total_written < file_size) {
         if (stat->config->random_access) {
 #if USE_SYSRAND
@@ -294,6 +322,10 @@ static int test_write(struct perf_stats *stat)
             }
         }
 
+#if PRINT_SINGLE_WRITE_TIME
+        uint32_t t1 = DTimestamp_Get();
+#endif
+
         chunk_size = (file_size - total_written < block_size) ? file_size - total_written : block_size;
         rc = fs_write(&file, buffer, chunk_size);
         if (rc < 0 ||  rc != chunk_size) {
@@ -301,6 +333,10 @@ static int test_write(struct perf_stats *stat)
             fs_close(&file);
             return rc;
         }
+#if PRINT_SINGLE_WRITE_TIME
+        uint32_t t2 = DTimestamp_Get();
+        DiagPrintf("write %d us\n", t2-t1);
+#endif
 
         total_written += rc;
         stat->write_operations_completed++;
