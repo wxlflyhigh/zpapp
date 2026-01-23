@@ -1,6 +1,7 @@
 /*
  * LittleFS on NOR Flash 性能测试代码
  */
+#include "ameba_soc.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/fs/fs.h>
@@ -16,7 +17,8 @@
 #define TEST_PARTITION        demo_storage_partition  /* Flash 分区标签 */
 #define TEST_MOUNT_POINT      "/lfs1"
 
-/* 测试配置 */
+#define SYNC_AFTER_WRITE (1)
+
 #define TEST_BLOCK_SIZE_MAX     (32*1024)           /* 测试块最大大小 */
 #define TEST_FILE_NAME      "/lfs1/test.bin"
 #define TEST_ITERATIONS     (10)
@@ -32,6 +34,8 @@ struct fs_test_config {
     uint32_t file_size_bytes;   // total file size
     uint32_t block_size_bytes;  // read/write size each time
     bool random_access;
+    uint32_t rows;  // random matrix row
+    uint32_t cols;  // random matrix columns
 
     uint32_t avg_write_speed;
     uint32_t avg_read_speed;
@@ -66,11 +70,11 @@ static uint8_t expected_buffer[TEST_BLOCK_SIZE_MAX];
 
 
 static const uint32_t file_lengths[] = {
-    // 4*1024,
-    // 8*1024,
-    // 16*1024,
-    // 32*1024,
-    // 64*1024,
+    4*1024,
+    8*1024,
+    16*1024,
+    32*1024,
+    64*1024,
     128*1024,
     };
 
@@ -79,6 +83,7 @@ static const uint32_t block_lengths[] = {
     256,
     512,
     1024,
+    2*1024,
     4*1024,
     8*1024,
     16*1024
@@ -96,6 +101,75 @@ static struct fs_mount_t lfs_storage_mnt = {
 };
 
 /******************************************************************/
+/******************************************************************/
+#define RANDOM_COL_RANGE (1024)
+#define RANDOM_ROW_RANGE (64)
+
+// 全局变量：随机排列
+uint8_t randrows[RANDOM_ROW_RANGE];  // 行的随机排列
+uint16_t randcols[RANDOM_COL_RANGE];  // 列的随机排列
+
+// 初始化随机排列
+void RandomPermutationsInitialize(int M, int N) {
+    if (M > RANDOM_ROW_RANGE || N > RANDOM_COL_RANGE) {
+        printf("error: random row %d > %d, col %d > %d\n",
+            M, RANDOM_ROW_RANGE, N, RANDOM_COL_RANGE);
+        return;
+    }
+
+    // 初始化randrows数组为0到M-1
+    for (int i = 0; i < M; i++) {
+        randrows[i] = i;
+    }
+    
+    // 初始化randcols数组为0到N-1
+    for (int j = 0; j < N; j++) {
+        randcols[j] = j;
+    }
+    
+    // 打乱randrows数组 (Fisher-Yates洗牌算法)
+    for (int i = M - 1; i > 0; i--) {
+        int j = sys_rand32_get() % (i + 1);
+        // 交换randrows[i]和randrows[j]
+        int temp = randrows[i];
+        randrows[i] = randrows[j];
+        randrows[j] = temp;
+    }
+    
+    // 打乱randcols数组 (Fisher-Yates洗牌算法)
+    for (int i = N - 1; i > 0; i--) {
+        int j = sys_rand32_get() % (i + 1);
+        // 交换randcols[i]和randcols[j]
+        int temp = randcols[i];
+        randcols[i] = randcols[j];
+        randcols[j] = temp;
+    }
+
+#if 0
+    // 打印随机排列
+    printf("rand rows [%d]: ", M);
+    for (int i = 0; i < M; i++) {
+        printf("%d ", randrows[i]);
+    }
+    printf("\n");
+    
+    printf("rand columns [%d]: ", N);
+    for (int j = 0; j < N; j++) {
+        printf("%d ", randcols[j]);
+    }
+    printf("\n\n");
+#endif
+
+    DCache_Clean((uint32_t)randrows, sizeof(randrows[0])*M);
+    DCache_Clean((uint32_t)randcols, sizeof(randcols[0])*N);
+}
+
+static uint32_t RandomPermutationsGet(uint32_t row, uint32_t col, uint32_t columns) {
+    uint32_t value = randrows[row] * columns + randcols[col];
+    return value;
+}
+
+
 /* 打印文件系统的使用情况 */
 static void print_file_system_status() {
     struct fs_statvfs stats;
@@ -125,10 +199,12 @@ static void generate_test_data(uint8_t *buffer, size_t size, uint8_t pattern)
 #else
     memset(buffer, pattern&0xFF, size);
 #endif
+
+    DCache_Clean((uint32_t)buffer, size);
 }
 
 /* 测试顺序写入 */
-static int test_sequential_write(struct perf_stats *stat)
+static int test_write(struct perf_stats *stat)
 {
     int rc;
     struct fs_file_t file;
@@ -137,7 +213,7 @@ static int test_sequential_write(struct perf_stats *stat)
 
     uint32_t block_size = stat->config->block_size_bytes;  // buffer_size
     uint32_t file_size = stat->config->file_size_bytes;
-    uint32_t chunk_size;    // chunk size read or write each time
+    uint32_t chunk_size = -1;    // chunk size read or write each time
 
     /* 打开文件用于写入 */
     fs_file_t_init(&file);
@@ -156,9 +232,17 @@ static int test_sequential_write(struct perf_stats *stat)
     
     /* 写入 */
     size_t total_written = 0;
+    uint32_t offset = -1;
+    int row_start = 0;
+    int row = 0;
+    int col  = 0;
+    // DiagPrintf("\n");
     while (total_written < file_size) {
         if (stat->config->random_access) {
-            uint32_t offset = sys_rand32_get() % (file_size/block_size) * block_size;
+            offset = RandomPermutationsGet(row, col, stat->config->cols);
+            offset = offset * block_size;
+            // DiagPrintf("w [%d][%d] %u\n", row, col, offset);
+
             rc = fs_seek(&file, offset, FS_SEEK_SET);
             if (rc < 0) {
                 printk("Seek failed: %d, offset %d\n", rc, offset);
@@ -178,7 +262,32 @@ static int test_sequential_write(struct perf_stats *stat)
         total_written += rc;
         stat->write_operations_completed++;
         rc = 0;
+
+        if (stat->config->random_access) {
+            row = (row + 1)% stat->config->rows;
+            col++;
+            if (col == stat->config->cols) {
+                row_start++;
+                row = row_start;
+                col = 0;
+            }
+        }
+
+#if CHECK_READ_DATA
+        if (stat->write_operations_completed == 1) {
+            printk("%u, %u, %u, %u\n", buffer[0], buffer[4], buffer[8], buffer[12]);
+        }
+#endif
+
     }
+
+    if (stat->config->random_access) {
+        printk("last write offset %d, cur_pos %d\n", offset, offset + chunk_size);
+    } 
+
+#if SYNC_AFTER_WRITE
+    fs_sync(&file);
+#endif
 
 out:
     if (total_written == file_size) {
@@ -205,7 +314,7 @@ out:
 }
 
 /* 测试顺序读取 */
-static int test_sequential_read(struct perf_stats *stat)
+static int test_read(struct perf_stats *stat)
 {
     int rc;
     struct fs_file_t file;
@@ -233,10 +342,18 @@ static int test_sequential_read(struct perf_stats *stat)
     start_cycles = k_cycle_get_64();
     
     /* 读取并验证 */
+    uint32_t offset;
+    int row_start = 0;
+    int row = 0;
+    int col  = 0;
     size_t total_read = 0;
     while (total_read < file_size) {
         if (stat->config->random_access) {
-            uint32_t offset = sys_rand32_get() % (file_size/block_size) * block_size;
+            offset = RandomPermutationsGet(row, col, stat->config->cols);
+            offset = offset * block_size;
+
+            // DiagPrintf("r [%d] [%d] %u\n", row, col, offset);
+
             rc = fs_seek(&file, offset, FS_SEEK_SET);
             if (rc < 0) {
                 printk("Seek failed: %d, offset %d\n", rc, offset);
@@ -253,7 +370,24 @@ static int test_sequential_read(struct perf_stats *stat)
             goto out;
         }
 
+        total_read += rc;
+        stat->read_operations_completed++;
+
+        if (stat->config->random_access) {
+            row = (row + 1)% stat->config->rows;
+            col++;
+            if (col == stat->config->cols) {
+                row_start++;
+                row = row_start;
+                col = 0;
+            }
+        }
+
 #if CHECK_READ_DATA
+if (stat->read_operations_completed == 1) {
+            printk("%u, %u, %u, %u\n", buffer[0], buffer[4], buffer[8], buffer[12]);
+        }
+
         /* 验证数据完整性 */
         if (memcmp(buffer, expected_buffer, rc) != 0) {
             printk("ERROR: Data verification failed at offset %zu\n", total_read);
@@ -262,8 +396,7 @@ static int test_sequential_read(struct perf_stats *stat)
         }
 #endif
 
-        total_read += rc;
-        stat->read_operations_completed++;
+
         rc = 0;
     }
 
@@ -329,7 +462,7 @@ int main(void) {
     int total_cases = 2*ARRAY_SIZE(block_lengths)*ARRAY_SIZE(file_lengths);
     int case_number = 0;
     struct fs_test_config test_config;
-    for (int random = 0; random < 1; random++) {
+    for (int random = 0; random < 2; random++) {
         for (size_t block = 0; block < ARRAY_SIZE(block_lengths); block++) {
             for (size_t flen = 0; flen < ARRAY_SIZE(file_lengths); flen++) {
                 // 设置测试参数
@@ -358,6 +491,22 @@ int main(void) {
                     case_number, total_cases,
                     config->file_size_bytes, config->block_size_bytes, config->random_access);
 
+                /* 预生成 随机序列 */
+                int blocks = config->file_size_bytes/config->block_size_bytes;
+                if (blocks > RANDOM_COL_RANGE) {
+                    config->cols = RANDOM_COL_RANGE;
+                    config->rows = blocks/RANDOM_COL_RANGE;
+                } else {
+                    config->rows = 1;
+                    config->cols = blocks;
+                }
+                if (config->rows * config->cols != blocks || config->rows > RANDOM_ROW_RANGE) {
+                    printk("ERROR: rows %d, cols %d, blocks %d\n", config->rows, config->cols, blocks);
+                    continue;
+                }
+
+                RandomPermutationsInitialize(config->rows, config->cols);
+
                 memset(stats, 0, sizeof(stats[0]) * TEST_ITERATIONS);
                 for (int i = 0; i < TEST_ITERATIONS; i++) {
                     grw_data_pattern = RW_DATA_PATTREN_BASE + i;
@@ -368,8 +517,9 @@ int main(void) {
                     printk("iteration: %d:%d\n", i, TEST_ITERATIONS);
                     /* 测试1: 顺序写入 */
                     // print_file_system_status();
-                    // printk("Test 1: Sequential write test...\n");
-                    rc = test_sequential_write(stat);
+                    printk("Test 1: write test...\n");
+                    DCache_CleanInvalidate(0xFFFFFFFF, 0xFFFFFFFF);
+                    rc = test_write(stat);
                     if (rc != 0) {
                         printk("[%d] Sequential write test failed: %d\n", i, rc);
                         // return rc;
@@ -377,17 +527,17 @@ int main(void) {
 
                     /* 测试2: 顺序读取 */
                     // print_file_system_status();
-                    // printk("Test 2: Sequential read test...\n");
-                    rc = test_sequential_read(stat);
+                    printk("Test 2: read test...\n");
+                    DCache_CleanInvalidate(0xFFFFFFFF, 0xFFFFFFFF);
+                    rc = test_read(stat);
                     if (rc != 0) {
                         printk("[%d] Sequential read test failed: %d\n", i, rc);
                         // return rc;
                     }
-
                 }
 
                 /* 计算均值, 只有成功的 iteration 参与均值计算，
-                    以防0处失败时，read_bytes/written_bytes 为0，导致计算的速度为0*/
+                    以防在 pos=0 处失败时，read_bytes或written_bytes 为0，导致计算的速度为0*/
                 uint32_t total_read_speed = 0;
                 uint32_t total_write_speed = 0;
                 uint32_t read_success_times = 0;
@@ -409,6 +559,7 @@ int main(void) {
                         total_write_speed += stat->write_speed_kbps;
                     }
                 }
+
                 if (read_success_times > 0) {
                     config->avg_read_speed = total_read_speed / read_success_times;
                 } else {
