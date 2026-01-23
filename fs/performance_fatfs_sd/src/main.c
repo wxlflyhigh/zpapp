@@ -34,10 +34,10 @@ LOG_MODULE_REGISTER(fatfs_sd);
 #define SYNC_AFTER_WRITE (1)
 #define USE_SYSRAND (0)
 
-// #define PRINT_SINGLE_WRITE_TIME (1) // 打印每次 fs_write 的耗时
-#define TEST_BLOCK_SIZE_MAX     (32*1024)           /* 测试块最大大小 */
+// #define PRINT_SINGLE_WRITE_TIME (1)          // 打印每次 fs_write 的耗时
+#define TEST_BLOCK_SIZE_MAX     (32*1024)       /* 测试块最大大小 */
 #define TEST_FILE_NAME      "/SD:/test.dat"
-#define TEST_ITERATIONS     (3)
+#define TEST_ITERATIONS     (5)
 
 #define CHECK_READ_DATA (0) //  是否检查读出数据的有效性
 #define RW_DATA_PATTREN_BASE (0xA5)
@@ -47,8 +47,8 @@ struct fs_test_config {
     uint32_t file_size_bytes;   // total file size
     uint32_t block_size_bytes;  // read/write size each time
     bool random_access;
-    uint32_t rows;
-    uint32_t cols;
+    uint32_t rows;  // random matrix row
+    uint32_t cols;  // random matrix columns
 
     uint32_t avg_write_speed;
     uint32_t avg_read_speed;
@@ -78,15 +78,10 @@ static uint8_t expected_buffer[TEST_BLOCK_SIZE_MAX];
 static struct perf_stats stats[TEST_ITERATIONS];
 
 static struct fs_test_config configs[] = {
-    // {4*1024*1024, 32*1024, 0},
     // {8*1024*1024, 32*1024, 0},
     // {8*1024*1024, 32*1024, 1},
-    // {8*1024*1024, 32*1024, 0},
-    // {8*1024*1024, 32*1024, 1},
-    // {512*1024, 32*1024, 0},
-    // {512*1024, 32*1024, 1},
 
-#if 1
+#if 0
     // 测试局部性
     // {256*1024,  128,     0},
     // {256*1024,  256,     0},
@@ -135,7 +130,8 @@ static struct fs_test_config configs[] = {
     {16*1024*1024, 32*1024, 1},
 #endif
 
-#if 0
+#if 1
+// 通用测试
     {8*1024*1024,  128,     0},
     {8*1024*1024,  256,     0},
     {8*1024*1024,  512,     0},
@@ -168,16 +164,18 @@ static struct fs_mount_t fatfs_mnt = {
 	.fs_data = &fat_fs,
 };
 /******************************************************************/
-#define RANDOM_RANGE (1024)
+#define RANDOM_COL_RANGE (1024)
+#define RANDOM_ROW_RANGE (64)
 
 // 全局变量：随机排列
-int randrows[RANDOM_RANGE];  // 行的随机排列
-int randcols[RANDOM_RANGE];  // 列的随机排列
+uint8_t randrows[RANDOM_ROW_RANGE];  // 行的随机排列
+uint16_t randcols[RANDOM_COL_RANGE];  // 列的随机排列
 
 // 初始化随机排列
 void RandomPermutationsInitialize(int M, int N) {
-    if (M > RANDOM_RANGE || N > RANDOM_RANGE) {
-        printf("random exceed %d. m=%d, n=%d\n", RANDOM_RANGE, M, N);
+    if (M > RANDOM_ROW_RANGE || N > RANDOM_COL_RANGE) {
+        printf("error: random row %d > %d, col %d > %d\n",
+            M, RANDOM_ROW_RANGE, N, RANDOM_COL_RANGE);
         return;
     }
 
@@ -209,7 +207,7 @@ void RandomPermutationsInitialize(int M, int N) {
         randcols[j] = temp;
     }
 
-#if 1
+#if 0
     // 打印随机排列
     printf("rand rows [%d]: ", M);
     for (int i = 0; i < M; i++) {
@@ -303,8 +301,9 @@ static int test_write(struct perf_stats *stat)
     /* 写入 */
     size_t total_written = 0;
     uint32_t offset;
+    int row_start = 0;
     int row = 0;
-    int col = 0;
+    int col  = 0;
     DiagPrintf("\n");
     while (total_written < file_size) {
         if (stat->config->random_access) {
@@ -314,7 +313,7 @@ static int test_write(struct perf_stats *stat)
             offset = RandomPermutationsGet(row, col, stat->config->cols);
             offset = offset * block_size;
 #endif
-            // DiagPrintf("[%d][%d] %u\n", row, col, offset);
+            // DiagPrintf("w [%d][%d] %u\n", row, col, offset);
             rc = fs_seek(&file, offset, FS_SEEK_SET);
             if (rc < 0) {
                 printk("Seek failed: %d, offset %d\n", rc, offset);
@@ -341,10 +340,14 @@ static int test_write(struct perf_stats *stat)
         total_written += rc;
         stat->write_operations_completed++;
 
-        col++;
-        if (col == stat->config->cols) {
-            row++;
-            col = 0;
+        if (stat->config->random_access) {
+            row = (row + 1)% stat->config->rows;
+            col++;
+            if (col == stat->config->cols) {
+                row_start++;
+                row = row_start;
+                col = 0;
+            }
         }
         // DiagPrintf("%d, %d. %d\n", chunk_size, total_written, stat->write_operations_completed);
 
@@ -405,8 +408,9 @@ static int test_read(struct perf_stats *stat)
     start_time = k_uptime_get();
     
     /* 读取并验证 */
+    int row_start = 0;
     int row = 0;
-    int col = 0;
+    int col  = 0;
     size_t total_read = 0;
     while (total_read < file_size) {
         if (stat->config->random_access) {
@@ -416,7 +420,7 @@ static int test_read(struct perf_stats *stat)
             offset = RandomPermutationsGet(row, col, stat->config->cols);
             offset = offset * block_size;
 #endif
-            // DiagPrintf("%u\n", offset);
+            // DiagPrintf("r [%d] [%d] %u\n", row, col, offset);
             rc = fs_seek(&file, offset, FS_SEEK_SET);
             if (rc < 0) {
                 printk("Seek failed: %d, offset %d\n", rc, offset);
@@ -434,6 +438,16 @@ static int test_read(struct perf_stats *stat)
 
         total_read += rc;
         stat->read_operations_completed++;
+
+        if (stat->config->random_access) {
+            row = (row + 1)% stat->config->rows;
+            col++;
+            if (col == stat->config->cols) {
+                row_start++;
+                row = row_start;
+                col = 0;
+            }
+        }
 
 #if CHECK_READ_DATA
         if (stat->read_operations_completed == 1) {
@@ -510,15 +524,16 @@ int main(void)
 
         /* 预生成 随机序列 */
         int blocks = config->file_size_bytes/config->block_size_bytes;
-        if (blocks > RANDOM_RANGE) {
-            config->cols = RANDOM_RANGE;
-            config->rows = blocks/RANDOM_RANGE;
+        if (blocks > RANDOM_COL_RANGE) {
+            config->cols = RANDOM_COL_RANGE;
+            config->rows = blocks/RANDOM_COL_RANGE;
         } else {
             config->rows = 1;
             config->cols = blocks;
         }
-        if (config->rows * config->cols != blocks) {
+        if (config->rows * config->cols != blocks || config->rows > RANDOM_ROW_RANGE) {
             printk("ERROR: rows %d, cols %d, blocks %d\n", config->rows, config->cols, blocks);
+            continue;
         }
 
         RandomPermutationsInitialize(config->rows, config->cols);
