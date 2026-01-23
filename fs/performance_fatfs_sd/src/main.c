@@ -163,6 +163,7 @@ static struct fs_mount_t fatfs_mnt = {
 	.mnt_point = FATFS_MNTP,
 	.fs_data = &fat_fs,
 };
+
 /******************************************************************/
 #define RANDOM_COL_RANGE (1024)
 #define RANDOM_ROW_RANGE (64)
@@ -231,7 +232,7 @@ static uint32_t RandomPermutationsGet(uint32_t row, uint32_t col, uint32_t colum
     return value;
 }
 
-/******************************************************************/
+
 static uint32_t last_offset = 0;
 uint32_t get_random(uint32_t file_size, uint32_t block_size) {
     uint32_t offset;
@@ -256,6 +257,31 @@ uint32_t get_random(uint32_t file_size, uint32_t block_size) {
 
     last_offset = offset;
     return offset;
+}
+/******************************************************************/
+static unsigned char win[512];
+void print_fatfs_info(FATFS* fs) {
+    int sect=0;
+    memset(win, 0, sizeof(win[0])*512);
+    if (disk_read(fs->pdrv, win, sect, 1) == 0) {
+
+#if 0
+        printf("\n\n");
+        for (int i = 0; i < 128; i++) {
+            printf("%02x, ", win[i]);
+            if ((i+1) % 16 == 0) {
+                printf("\n");
+            }
+        }
+#endif
+
+        int BPB_BytsPerSec = win[11] + (win[12] << 8);
+        int BPB_SecPerClus = win[13];
+        printf("BPB_BytsPerSec %d, BPB_SecPerClus %d, cluster %d bytes\n", 
+            BPB_BytsPerSec, BPB_SecPerClus, BPB_BytsPerSec*BPB_SecPerClus);
+    } else {
+        printk("read boot sector failed\n");
+    }
 }
 
 /* 生成测试数据 */
@@ -506,7 +532,9 @@ int main(void)
 	} else {
 		LOG_INF("FAT file system mounting successfully\n");
 	}
-    
+
+    print_fatfs_info(&fat_fs);
+
     /* 清理旧测试文件 */
     fs_unlink(TEST_FILE_NAME);
     LOG_INF("wr buffer  %p\n", buffer);
