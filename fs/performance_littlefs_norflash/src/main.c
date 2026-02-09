@@ -19,7 +19,7 @@
 
 #define SYNC_AFTER_WRITE (1)
 
-#define TEST_BLOCK_SIZE_MAX     (32*1024)           /* 测试块最大大小 */
+#define TEST_BLOCK_SIZE_MAX     (32*1024)           /* fs_read|write API 单次读|写的 最大大小 */
 #define TEST_FILE_NAME      "/lfs1/test.bin"
 #define TEST_ITERATIONS     (10)
 
@@ -46,19 +46,26 @@ struct fs_test_config {
 /* 性能统计结构体 */
 struct perf_stats {
     struct fs_test_config *config;
+
+    // 开始时，用 ms 计时，但读速度过快，ms级别精度不够，所有换成了us
+    // 可以移除 ms 级别的计时
     uint64_t write_time_ms;
     uint64_t read_time_ms;
+
+    // 最终使用的是 us 级别的计时
     uint64_t read_time_cycles;
     uint64_t write_time_cycles;
-    uint32_t write_operations_completed;
-    uint32_t read_operations_completed;
+    uint64_t read_time_us;      // cycles -> us 换算得
+    uint64_t write_time_us;     // cycles -> us 换算得
 
-    uint64_t read_time_us;
-    uint64_t write_time_us;
     uint32_t write_speed_kbps;
     uint32_t read_speed_kbps;
     uint32_t written_bytes;
     uint32_t read_bytes;
+
+    uint32_t write_operations_completed;
+    uint32_t read_operations_completed;
+
     bool read_success;  // true: 每次都读成功
     bool write_success; // true: 每次都写成功了
 };
@@ -75,7 +82,9 @@ static const uint32_t file_lengths[] = {
     16*1024,
     32*1024,
     64*1024,
-    128*1024,
+
+    /* 文件 128KB时， app.overlay 中的 partition 需要 512KB, 否则随机读容易失败 */
+    // 128*1024,
     };
 
 static const uint32_t block_lengths[] = {
@@ -475,6 +484,10 @@ int main(void) {
                 struct fs_test_config *config = &test_config;
                 if ((config->block_size_bytes > config->file_size_bytes) 
                     // || (config->random_access && config->file_size_bytes > 16*1024)
+
+                    /* fs_write len 很小时，随机写的速度很慢，跳过*/
+                    || (config->random_access && config->block_size_bytes < 512
+                    )
                     ) {
                     printk("skip: [%d:%d] file %u bytes, block %u bytes, random access %d\n",
                         case_number, total_cases,

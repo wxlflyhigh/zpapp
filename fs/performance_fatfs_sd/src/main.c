@@ -31,17 +31,38 @@ LOG_MODULE_REGISTER(fatfs_sd);
 #define TEST_FILE	FATFS_MNTP"/testfile.txt"
 
 /* 测试配置 */
-#define SYNC_AFTER_WRITE (1)
+#define SYNC_AFTER_WRITE (1)    // 写后 sync，确保数据已经写入设备
 #define USE_SYSRAND (0)
 
 // #define PRINT_SINGLE_WRITE_TIME (1)          // 打印每次 fs_write 的耗时
-#define TEST_BLOCK_SIZE_MAX     (32*1024)       /* 测试块最大大小 */
+#define TEST_BLOCK_SIZE_MAX     (32*1024)       /* fs_read|write 单次读|写的 最大大小 */
 #define TEST_FILE_NAME      "/SD:/test.dat"
 #define TEST_ITERATIONS     (5)
+
+#if USE_DELAY_FOR_LA
+#define DELAY_LA(ms) k_msleep(ms)
+#else
+#define DELAY_LA(ms)    /* empty */
+#endif
 
 #define CHECK_READ_DATA (0) //  是否检查读出数据的有效性
 #define RW_DATA_PATTREN_BASE (0xA5)
 static unsigned char grw_data_pattern = 0x50;
+
+/************************ START LA **********************/
+// 使用逻辑分析仪时，为了方便看波形，引入下面两个宏
+#define LA_ANALYSIS (0) // 1：给逻辑分析仪采集波形用
+
+#if LA_ANALYSIS
+#define DELAY_BETWEEN_CASES (1)     // 在 READ 和 WRITE 之间插入延迟，方便区分 32KB-write块 和 32KB-read块的波形。
+#undef CHECK_READ_DATA
+#define CHECK_READ_DATA (0) // LA 中，使用默认的 0xA5, 方便看数据
+#else
+#define DELAY_BETWEEN_CASES (0)
+#endif
+
+#define USE_DELAY_FOR_LA (0)    // 进一步区分 fs_open、fs_read|write、fs_close 之间的波形
+/************************ END LA **********************/
 
 struct fs_test_config {
     uint32_t file_size_bytes;   // total file size
@@ -66,6 +87,11 @@ struct perf_stats {
     uint32_t read_operations_completed;
 };
 
+/* fs_read|write API的 buffer 必须32字节对齐，否则读速度会大幅降低。
+ nuwa\zephyr\subsys\sd\sd_ops.c中的 card_read_blocks() 会检查buffer是否对齐，
+ 不对齐时，使用内部buffer，SD卡数据-->card internal buffer --> API buffer
+ 相当于 将整个读到的数据 memcpy 了一遍。
+ */
 __attribute__((aligned(32))) 
 static uint8_t buffer[TEST_BLOCK_SIZE_MAX];
 
@@ -78,60 +104,14 @@ static uint8_t expected_buffer[TEST_BLOCK_SIZE_MAX];
 static struct perf_stats stats[TEST_ITERATIONS];
 
 static struct fs_test_config configs[] = {
-    // {8*1024*1024, 32*1024, 0},
-    // {8*1024*1024, 32*1024, 1},
-
-#if 0
-    // 测试局部性
-    // {256*1024,  128,     0},
-    // {256*1024,  256,     0},
-    // {256*1024,  512,     0},
-    // {256*1024,  1*1024,  0},
-    // {256*1024,  2*1024,  0},
-    // {256*1024,  4*1024,  0},
-    // {256*1024,  8*1024,  0},
-    // {256*1024,  16*1024, 0},
-    {256*1024,  32*1024, 0},
-
-    /* rand access */
-    {256*1024,  512,     1},
-    {256*1024,  128,     1},
-    // {256*1024,  256,     1},
-    // {256*1024,  1*1024,  1},
-    // {256*1024,  2*1024,  1},
-    // {256*1024,  4*1024,  1},
-    // {256*1024,  8*1024,  1},
-    // {256*1024,  16*1024, 1},
-    // {256*1024,  32*1024, 1},
-#endif
-
-#if 0
-    {4*1024*1024,  4*1024,  0},
-    {4*1024*1024,  8*1024,  0},
-    {4*1024*1024,  16*1024, 0},
-    {4*1024*1024,  32*1024, 0},
-
-    /* rand access */
-    {4*1024*1024,  4*1024,  1},
-    {4*1024*1024,  8*1024,  1},
-    {4*1024*1024,  16*1024, 1},
-    {4*1024*1024,  32*1024, 1},
-#endif
-
-#if 0
-    {16*1024*1024, 4*1024,  0},
-    {16*1024*1024, 8*1024,  0},
-    {16*1024*1024, 16*1024, 0},
-    {16*1024*1024, 32*1024, 0},
-
-    {16*1024*1024, 4*1024,  1},
-    {16*1024*1024, 8*1024,  1},
-    {16*1024*1024, 16*1024, 1},
-    {16*1024*1024, 32*1024, 1},
-#endif
-
 #if 1
-// 通用测试
+// 临时测试
+    {8*1024*1024, 32*1024, 0},
+    {8*1024*1024, 32*1024, 1},
+#endif
+
+#if 0
+// 性能报告-全场景测试
     {8*1024*1024,  128,     0},
     {8*1024*1024,  256,     0},
     {8*1024*1024,  512,     0},
@@ -209,7 +189,7 @@ void RandomPermutationsInitialize(int M, int N) {
     }
 
 #if 0
-    // 打印随机排列
+    // 打印随机排列的值
     printf("rand rows [%d]: ", M);
     for (int i = 0; i < M; i++) {
         printf("%d ", randrows[i]);
@@ -231,7 +211,6 @@ static uint32_t RandomPermutationsGet(uint32_t row, uint32_t col, uint32_t colum
     uint32_t value = randrows[row] * columns + randcols[col];
     return value;
 }
-
 
 static uint32_t last_offset = 0;
 uint32_t get_random(uint32_t file_size, uint32_t block_size) {
@@ -266,6 +245,7 @@ void print_fatfs_info(FATFS* fs) {
     if (disk_read(fs->pdrv, win, sect, 1) == 0) {
 
 #if 0
+    // 打印 FatFS 头部的 512 字节
         printf("\n\n");
         for (int i = 0; i < 128; i++) {
             printf("%02x, ", win[i]);
@@ -305,11 +285,12 @@ static int test_write(struct perf_stats *stat)
     int rc;
     int64_t start_time, end_time;
     uint32_t start_time_us, end_time_us;
-    uint32_t block_size = stat->config->block_size_bytes;  // buffer_size
+    uint32_t block_size = stat->config->block_size_bytes;
     uint32_t file_size = stat->config->file_size_bytes;
     uint32_t chunk_size;    // chunk size read or write each time
 
     /* 打开文件用于写入 */
+    DELAY_LA(100);
     fs_file_t_init(&file);
     rc = fs_open(&file, TEST_FILE_NAME, FS_O_CREATE | FS_O_WRITE);
     if (rc < 0) {
@@ -321,7 +302,7 @@ static int test_write(struct perf_stats *stat)
     generate_test_data(buffer, block_size, grw_data_pattern);
     
     /* 开始计时 */
-    start_time = k_uptime_get();
+    start_time = k_uptime_get();    // ms
     start_time_us = DTimestamp_Get();
 
     /* 写入 */
@@ -331,6 +312,7 @@ static int test_write(struct perf_stats *stat)
     int row = 0;
     int col  = 0;
     DiagPrintf("\n");
+    DELAY_LA(100);
     while (total_written < file_size) {
         if (stat->config->random_access) {
 #if USE_SYSRAND
@@ -350,7 +332,9 @@ static int test_write(struct perf_stats *stat)
 #if PRINT_SINGLE_WRITE_TIME
         uint32_t t1 = DTimestamp_Get();
 #endif
-
+    
+        // printk("fs_write\n");
+        DELAY_LA(200);
         chunk_size = (file_size - total_written < block_size) ? file_size - total_written : block_size;
         rc = fs_write(&file, buffer, chunk_size);
         if (rc < 0 ||  rc != chunk_size) {
@@ -358,6 +342,7 @@ static int test_write(struct perf_stats *stat)
             fs_close(&file);
             return rc;
         }
+
 #if PRINT_SINGLE_WRITE_TIME
         uint32_t t2 = DTimestamp_Get();
         DiagPrintf("write %d us\n", t2-t1);
@@ -385,6 +370,8 @@ static int test_write(struct perf_stats *stat)
     }
 
     #if SYNC_AFTER_WRITE
+        // printk("fs_sync\n");
+        DELAY_LA(300);
         fs_sync(&file);
     #endif
 
@@ -397,6 +384,8 @@ static int test_write(struct perf_stats *stat)
     stat->write_time_ms = (end_time - start_time);
     stat->write_speed_kbps = (int)(((float)file_size / 1024 * 1000) / stat->write_time_ms);
     
+    // printk("fs_close\n");
+    DELAY_LA(400);
     rc = fs_close(&file);
     if (rc != 0) {
         DiagPrintf("Error closing file: %d\n", rc);
@@ -413,12 +402,15 @@ static int test_read(struct perf_stats *stat)
     int rc;
     uint32_t offset;
     int64_t start_time, end_time;
-    uint32_t block_size = stat->config->block_size_bytes;  // buffer_size
+    uint32_t block_size = stat->config->block_size_bytes;
     uint32_t file_size = stat->config->file_size_bytes;
     uint32_t chunk_size;    // chunk size read or write each time
     
     /* 打开文件用于读取 */
+    DELAY_LA(100);
+    // printk("fs_file_t_init\n");
     fs_file_t_init(&file);
+    // printk("fs_open\n");
     rc = fs_open(&file, TEST_FILE_NAME, FS_O_READ);
     if (rc < 0) {
         printk("Failed to open file for reading: %d\n", rc);
@@ -432,7 +424,8 @@ static int test_read(struct perf_stats *stat)
 
     /* 开始计时 */
     start_time = k_uptime_get();
-    
+
+    DELAY_LA(100);
     /* 读取并验证 */
     int row_start = 0;
     int row = 0;
@@ -454,6 +447,8 @@ static int test_read(struct perf_stats *stat)
             }
         }
 
+        // printk("fs_read\n");
+        DELAY_LA(200);
         chunk_size = (file_size - total_read < block_size) ? file_size - total_read : block_size;
         rc = fs_read(&file, buffer, chunk_size);
         if (rc < 0 || rc != chunk_size) {
@@ -495,7 +490,9 @@ static int test_read(struct perf_stats *stat)
     /* 计算性能 */
     stat->read_time_ms = (end_time - start_time);
     stat->read_speed_kbps = (int)(((float)file_size / 1024 * 1000) / stat->read_time_ms);
-    
+
+    // printk("fs_close\n");
+    DELAY_LA(300);
     fs_close(&file);
     return 0;
 }
@@ -537,10 +534,11 @@ int main(void)
 
     /* 清理旧测试文件 */
     fs_unlink(TEST_FILE_NAME);
-    LOG_INF("wr buffer  %p\n", buffer);
+    LOG_INF("wr buffer  %p. fatfs.win %p\n", buffer, fat_fs.win);
 
     int config_nums = (sizeof(configs) / sizeof(configs[0]));
     for (int c = 0; c < config_nums; c++) {
+        DELAY_LA(2000);
         struct fs_test_config *config = &configs[c];
         if (config->block_size_bytes > TEST_BLOCK_SIZE_MAX) {
             printk("ERROR: block_size %d exceeds %d\n", config->block_size_bytes, TEST_BLOCK_SIZE_MAX);
@@ -569,12 +567,20 @@ int main(void)
         memset(stats, 0, sizeof(stats[0]) * TEST_ITERATIONS);
 
         for (int i = 0; i < TEST_ITERATIONS; i++) {
+#if CHECK_READ_DATA
             grw_data_pattern = RW_DATA_PATTREN_BASE + i*config_nums + c;
+#else
+            grw_data_pattern = RW_DATA_PATTREN_BASE;
+#endif
             struct perf_stats *stat = &stats[i];
             stat->config = config;
 
             /* 测试1: 顺序写入 */
+#if DELAY_BETWEEN_CASES
+            k_msleep(1000);
+#endif
             printk("Test 1: write test... [%d]\n", grw_data_pattern);
+            DCache_CleanInvalidate(0xFFFFFFFF, 0xFFFFFFFF);
             rc = test_write(stat);
             if (rc != 0) {
                 printk("write test failed: %d\n", rc);
@@ -583,7 +589,11 @@ int main(void)
 
 #if 1
             /* 测试2: 顺序读取 */
+#if DELAY_BETWEEN_CASES
+            k_msleep(1000);
+#endif
             printk("Test 2: read test...\n");
+            DCache_CleanInvalidate(0xFFFFFFFF, 0xFFFFFFFF);
             rc = test_read(stat);
             if (rc != 0) {
                 printk("read test failed: %d\n", rc);
@@ -608,7 +618,8 @@ int main(void)
         display_performance_results(config, stats);
 
     }
-    
+
+    DELAY_LA(200);
     /* 清理测试文件 */
     fs_unlink(TEST_FILE_NAME);
     
